@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -33,7 +33,7 @@ const DefectType: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
 
-  const {can} = usePermission();
+  const { can } = usePermission();
 
   const validateForm = () => {
     if (!formData.name.trim()) return { isValid: false, message: 'Defect Type cannot be empty.' };
@@ -44,99 +44,99 @@ const DefectType: React.FC = () => {
   useEffect(() => { setToast({ isOpen: false, message: '', type: 'success' }); setCurrentPage(1); }, []);
 
   const fetchDefectTypes = async (page: number, pageSize: number) => {
-    
-  try {
-    setLoading(true);
-    const res = await getDefectTypes(page, pageSize);
-    setTotalPages(res.data.totalPages)
-    setDefectTypes(res.data.content);
-  } catch (error) {
-    setLoading(false)
-    showToast('Failed to fetch Defect Types', 'error');
-  } finally {
-    setLoading(false)
-  }
-};
 
-useEffect(() => {
-  fetchDefectTypes(currentPage -1 , pageSize);
-  setToast({ isOpen: false, message: '', type: 'success' });
-}, [currentPage]);
+    try {
+      setLoading(true);
+      const res = await getDefectTypes(page, pageSize);
+      setTotalPages(res.data?.totalPages || res.data?.data?.totalPages || 1)
+      setDefectTypes(res.data?.content || res.data?.data?.content || res.data?.data || res.data || []);
+    } catch (error) {
+      setLoading(false)
+      showToast('Failed to fetch Defect Types', 'error');
+    } finally {
+      setLoading(false)
+    }
+  };
+
+  useEffect(() => {
+    fetchDefectTypes(currentPage - 1, pageSize);
+    setToast({ isOpen: false, message: '', type: 'success' });
+  }, [currentPage]);
 
 
 
   const resetForm = () => setFormData({ name: '' });
 
   const handleCreate = async () => {
-  const v = validateForm();
-  if (!v.isValid) { showToast(v.message, 'error'); return; }
-  const exists = defectTypes.some(res => res.name.trim().toLowerCase() === formData.name.trim().toLowerCase());
-  if (exists) { showToast('Defect Type already exists', 'error'); return; }
-  try {
-    await createDefectType({ name: formData.name.trim() });
-    showToast('Defect Type created successfully!', 'success');
-    setIsCreateModalOpen(false);
-    resetForm();
-    await fetchDefectTypes(0,pageSize);
-  } catch {
-    showToast('Failed to create Defect Type', 'error');
-  }
-};
+    const v = validateForm();
+    if (!v.isValid) { showToast(v.message, 'error'); return; }
+    const exists = defectTypes.some(res => res.name.trim().toLowerCase() === formData.name.trim().toLowerCase());
+    if (exists) { showToast('Defect Type already exists', 'error'); return; }
+    try {
+      await createDefectType({ name: formData.name.trim() });
+      showToast('Defect Type created successfully!', 'success');
+      setIsCreateModalOpen(false);
+      resetForm();
+      await fetchDefectTypes(0, pageSize);
+    } catch {
+      showToast('Failed to create Defect Type', 'error');
+    }
+  };
 
 
-  
-  
-  
-  
-  
-  
-  
 
-    const handleEdit = async () => {
-  if (!editingDefectType) return;
-  if (formData.name.trim() === editingDefectType.name.trim()) { showToast('No changes were made to the Defect Type', 'error'); return; }
-  const v = validateForm();
-  if (!v.isValid) { showToast(v.message, 'error'); return; }
-  const exists = defectTypes.some(r => r.name.trim().toLowerCase() === formData.name.trim().toLowerCase() && r.id !== editingDefectType.id);
-  if (exists) { showToast('Defect Type already exists', 'error'); return; }
-  try {
-    await updateDefectType(editingDefectType.id, { name: formData.name.trim() });
-    setDefectTypes(prev => prev.map(dt => dt.id === editingDefectType.id ? { ...dt, name: formData.name.trim() } : dt));
-    showToast('Defect Type updated successfully!', 'success');
-    setIsEditModalOpen(false);
-    setEditingDefectType(null);
-    resetForm();
-  } catch {
-    showToast('Failed to update Defect Type', 'error');
-  }
-};
-  
-  
-  
-  
-  
-  
-  
-  
 
-    const handleDelete = async () => {
-  if (!deletingDefectType) return;
-  try {
-    await deleteDefectType(deletingDefectType.id);
-    showToast('Defect Type deleted successfully!', 'success');
-    setIsDeleteModalOpen(false);
-    setDeletingDefectType(null);
-    await fetchDefectTypes(0,pageSize);
-  } catch {
-    showToast('Failed to delete Defect Type', 'error');
-  }
-};
 
-  
-  
-  
-  
-  
+
+
+
+
+
+  const handleEdit = async () => {
+    if (!editingDefectType) return;
+    if (formData.name.trim() === editingDefectType.name.trim()) { showToast('No changes were made to the Defect Type', 'error'); return; }
+    const v = validateForm();
+    if (!v.isValid) { showToast(v.message, 'error'); return; }
+    const exists = defectTypes.some(r => r.name.trim().toLowerCase() === formData.name.trim().toLowerCase() && r.id !== editingDefectType.id);
+    if (exists) { showToast('Defect Type already exists', 'error'); return; }
+    try {
+      await updateDefectType(editingDefectType.id, { name: formData.name.trim() });
+      setDefectTypes(prev => prev.map(dt => dt.id === editingDefectType.id ? { ...dt, name: formData.name.trim() } : dt));
+      showToast('Defect Type updated successfully!', 'success');
+      setIsEditModalOpen(false);
+      setEditingDefectType(null);
+      resetForm();
+    } catch {
+      showToast('Failed to update Defect Type', 'error');
+    }
+  };
+
+
+
+
+
+
+
+
+
+  const handleDelete = async () => {
+    if (!deletingDefectType) return;
+    try {
+      await deleteDefectType(deletingDefectType.id);
+      showToast('Defect Type deleted successfully!', 'success');
+      setIsDeleteModalOpen(false);
+      setDeletingDefectType(null);
+      await fetchDefectTypes(0, pageSize);
+    } catch {
+      showToast('Failed to delete Defect Type', 'error');
+    }
+  };
+
+
+
+
+
+
 
   const openEditModal = (defectType: DefectType) => {
     setEditingDefectType(defectType);
@@ -166,33 +166,33 @@ useEffect(() => {
       <div className="overflow-x-auto rounded-lg shadow mb-8 max-w-2xl mx-auto">
         {loading ? <div className="flex justify-center items-center py-20 min-h-[200px]">
           <OrbitProgress
-              variant="dotted"
-              color="#3B82F6"
-              size="medium"
-              text="Loading ..."
-              textColor="#6b7280"
+            variant="dotted"
+            color="#3B82F6"
+            size="medium"
+            text="Loading ..."
+            textColor="#6b7280"
           />
         </div> : <table className="min-w-full divide-y divide-gray-200 text-base">
           <thead className="bg-gray-50">
-          <tr>
-            <th className="px-5 py-3 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">Defect Type</th>
-            {(can.defectType.edit || can.defectType.delete) && <th className="px-5 py-3 text-center text-sm font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">Actions</th>}
-          </tr>
+            <tr>
+              <th className="px-5 py-3 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">Defect Type</th>
+              {(can.defectType.edit || can.defectType.delete) && <th className="px-5 py-3 text-center text-sm font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">Actions</th>}
+            </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-          {defectTypes.length === 0 ? (
+            {defectTypes.length === 0 ? (
               <tr><td colSpan={2} className="px-5 py-3 text-center text-gray-500">No defect types found.</td></tr>
-          ) : (
+            ) : (
               defectTypes.map((defectType) => (
-                  <tr key={defectType.id}>
-                    <td className="px-5 py-3 whitespace-nowrap font-semibold text-gray-900 text-base">{defectType.name}</td>
-                    <td className="px-5 py-3 whitespace-nowrap text-center">
-                      {can.defectType.edit && <button onClick={() => openEditModal(defectType)} className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded mr-2" title="Edit"><Edit2 className="w-5 h-5" /></button>}
-                      {can.defectType.delete && <button onClick={() => openDeleteModal(defectType)} className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-5 h-5" /></button>}
-                    </td>
-                  </tr>
+                <tr key={defectType.id}>
+                  <td className="px-5 py-3 whitespace-nowrap font-semibold text-gray-900 text-base">{defectType.name}</td>
+                  <td className="px-5 py-3 whitespace-nowrap text-center">
+                    {can.defectType.edit && <button onClick={() => openEditModal(defectType)} className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded mr-2" title="Edit"><Edit2 className="w-5 h-5" /></button>}
+                    {can.defectType.delete && <button onClick={() => openDeleteModal(defectType)} className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-5 h-5" /></button>}
+                  </td>
+                </tr>
               ))
-          )}
+            )}
           </tbody>
         </table>}
         {totalPages > 1 && (

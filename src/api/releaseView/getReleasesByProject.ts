@@ -1,6 +1,6 @@
-import { mockDb } from "../../mock/mockData";
-
-export const getReleasesByProjectId = async (projectId: string | number) => {
-  const releases = mockDb.getReleases(Number(projectId));
-  return releases;
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const getReleasesByProject = async (projectId) => {
+  try { const r = await apiClient.get(ENDPOINTS.releaseActiveByProject(projectId)); return r.data.data ?? []; }
+  catch { return []; }
 };

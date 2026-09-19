@@ -1,18 +1,8 @@
-import { mockDb } from "../../mock/mockData";
-
-export const getBulkSuboduleAllocation = async (
-  projectId: number,
-  moduleId: number,
-  submoduleId: number
-) => {
-  const users = mockDb.getUsers();
-  return users.slice(0, 2).map(u => ({
-    id: u.id,
-    employeeId: u.id,
-    employeeName: `${u.firstName} ${u.lastName}`,
-    projectId,
-    moduleId,
-    submoduleId,
-    role: u.roleName || 'Developer',
-  }));
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const getBulkSubmoduleAllocation = async (moduleId) => {
+  try { const r = await apiClient.get(ENDPOINTS.subModule(moduleId)); return r.data.data ?? []; }
+  catch { return []; }
 };
+
+export const getBulkSuboduleAllocation = async (data: any) => [];

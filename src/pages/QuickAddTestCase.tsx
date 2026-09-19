@@ -89,8 +89,12 @@ const QuickAddTestCase: React.FC<{ selectedProjectId: string, onTestCaseAdded?: 
 
     const formData = modal.formData;
 
-    const selectedSeverity = severities.find((sev) => sev.name === formData.severity);
-    const selectedDefectType = defectTypes.find((dt) => dt.defectTypeName === formData.type);
+    const selectedSeverity = severities.find(
+      (sev) => sev.name === formData.severity || String(sev.id) === formData.severity
+    );
+    const selectedDefectType = defectTypes.find(
+      (dt) => dt.defectTypeName === formData.type || String(dt.id) === formData.type
+    );
 
     if (!selectedSeverity || !selectedDefectType) {
       showToast('Please fill all required fields before submitting.', "error");
@@ -104,6 +108,7 @@ const QuickAddTestCase: React.FC<{ selectedProjectId: string, onTestCaseAdded?: 
     }
 
     const payload = {
+      name: formData.description?.trim().slice(0, 100) || "Test Case",
       description: formData.description,
       detailsSteps: formData.steps,
       severityId: selectedSeverity.id,
@@ -186,59 +191,72 @@ const QuickAddTestCase: React.FC<{ selectedProjectId: string, onTestCaseAdded?: 
   };
 
   
+  const fetchSeverities = async () => {
+    try {
+      const res = await getSeverities(0, 100);
+      console.log("Severities API response:", res);
+      let severityData: any[] = [];
+      if (res.data?.content && Array.isArray(res.data.content)) {
+        severityData = res.data.content;
+      } else if (res.data?.data && Array.isArray(res.data.data)) {
+        severityData = res.data.data;
+      } else if (res.data && Array.isArray(res.data)) {
+        severityData = res.data;
+      } else if (Array.isArray(res)) {
+        severityData = res;
+      }
+      
+      const mappedSeverities = severityData.map((sev: any) => ({
+        id: sev.id,
+        name: sev.name,
+        color: sev.color
+      }));
+      console.log("Mapped severities:", mappedSeverities);
+      setSeverities(mappedSeverities);
+    } catch (error) {
+      console.error("Error fetching severities:", error);
+      setSeverities([]);
+    }
+  };
+
+  const fetchDefectTypes = async () => {
+    try {
+      const res = await getDefectTypes(0, 100);
+      console.log("Defect Types API response:", res);
+      let defectTypeData: any[] = [];
+      if (res.data?.content && Array.isArray(res.data.content)) {
+        defectTypeData = res.data.content;
+      } else if (res.data?.data && Array.isArray(res.data.data)) {
+        defectTypeData = res.data.data;
+      } else if (res.data && Array.isArray(res.data)) {
+        defectTypeData = res.data;
+      } else if (Array.isArray(res)) {
+        defectTypeData = res;
+      }
+      
+      const mappedDefectTypes = defectTypeData.map((dt: any) => ({
+        id: dt.id,
+        defectTypeName: dt.name || dt.defectTypeName
+      }));
+      console.log("Mapped defect types:", mappedDefectTypes);
+      setDefectTypes(mappedDefectTypes);
+    } catch (error) {
+      console.error("Error fetching defect types:", error);
+      setDefectTypes([]);
+    }
+  };
+
   useEffect(() => {
-    getSeverities(0, 100)
-      .then(res => {
-        console.log("Severities API response:", res);
-        let severityData = [];
-        if (res.data?.content && Array.isArray(res.data.content)) {
-          severityData = res.data.content;
-        } else if (res.data && Array.isArray(res.data)) {
-          severityData = res.data;
-        } else if (Array.isArray(res)) {
-          severityData = res;
-        }
-        
-        const mappedSeverities = severityData.map((sev: any) => ({
-          id: sev.id,
-          name: sev.name,
-          color: sev.color
-        }));
-        console.log("Mapped severities:", mappedSeverities);
-        setSeverities(mappedSeverities);
-      })
-      .catch((error) => {
-        console.error("Error fetching severities:", error);
-        setSeverities([]);
-      });
+    fetchSeverities();
+    fetchDefectTypes();
   }, []);
 
-  
   useEffect(() => {
-    getDefectTypes(0, 100)
-      .then(res => {
-        console.log("Defect Types API response:", res);
-        let defectTypeData = [];
-        if (res.data?.content && Array.isArray(res.data.content)) {
-          defectTypeData = res.data.content;
-        } else if (res.data && Array.isArray(res.data)) {
-          defectTypeData = res.data;
-        } else if (Array.isArray(res)) {
-          defectTypeData = res;
-        }
-        
-        const mappedDefectTypes = defectTypeData.map((dt: any) => ({
-          id: dt.id,
-          defectTypeName: dt.name || dt.defectTypeName
-        }));
-        console.log("Mapped defect types:", mappedDefectTypes);
-        setDefectTypes(mappedDefectTypes);
-      })
-      .catch((error) => {
-        console.error("Error fetching defect types:", error);
-        setDefectTypes([]);
-      });
-  }, []);
+    if (modal.open) {
+      if (severities.length === 0) fetchSeverities();
+      if (defectTypes.length === 0) fetchDefectTypes();
+    }
+  }, [modal.open]);
 
   useEffect(() => {
     if (modal.open && selectedProjectId) {

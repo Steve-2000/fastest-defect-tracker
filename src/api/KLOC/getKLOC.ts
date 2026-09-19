@@ -1,54 +1,14 @@
-import { mockDb } from "../../mock/mockData";
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
 
-export interface DefectDensityData {
-  kloc: number;
-  totalDefects: number;
-  defectDensity: number;
-}
-
-export interface DefectDensityResponse {
-  status: string;
-  statusCode: number;
-  statusMessage: string;
-  data: DefectDensityData;
-}
-
-export interface KlocResponse {
-  status: string;
-  statusCode: number;
-  statusMessage: string;
-  data: {
-    kloc: number;
-  };
-}
-
-export const getKILOC = async (projectId: number): Promise<KlocResponse> => {
-  const project = mockDb.getProjectById(projectId);
-  return {
-    status: 'success',
-    statusCode: 200,
-    statusMessage: 'KLOC fetched successfully',
-    data: {
-      kloc: project?.kloc || 45,
-    },
-  };
-};
-
-export const getDefectDensity = async (projectId: number): Promise<DefectDensityResponse> => {
-  const project = mockDb.getProjectById(projectId);
-  const defects = mockDb.getDefects(projectId);
-  const kloc = project?.kloc || 45;
-  const totalDefects = defects.length || 10;
-  const defectDensity = Number((totalDefects / (kloc || 1)).toFixed(2));
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    statusMessage: 'Defect density fetched successfully',
-    data: {
-      kloc,
-      totalDefects,
-      defectDensity,
-    },
-  };
-};
+export const getKLOC = async () => { try { const r = await apiClient.get(ENDPOINTS.gitKloc); return r.data.data??[]; } catch { return []; } };
+export const getKILOC = getKLOC;
+export const getReleaseKLOC = async (releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.releaseKlocById(releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getDefectDensity = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectDensity(projectId)); return r.data.data??{}; } catch { return {}; } };
+export const getProjectKloc = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.projectKloc(projectId)); return r.data.data??[]; } catch { return []; } };
+export const getDefectCreatedCount = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectCountByCreated(projectId,releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getDefectFixedCount = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectFixedCount(projectId,releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getDefectStatusLog = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectStatusLog(projectId,releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getDashboard = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.dashboard(projectId,releaseId)); return r.data.data??{}; } catch { return {}; } };
+export const getDashboardTimeToFind = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.dashboardTimeToFind(projectId,releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getDashboardTimeToFix = async (projectId: number, releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.dashboardTimeToFix(projectId,releaseId)); return r.data.data??[]; } catch { return []; } };

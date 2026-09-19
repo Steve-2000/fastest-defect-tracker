@@ -1,62 +1,33 @@
-import { mockDb } from "../mock/mockData";
-
-export interface SubModuleDevResponse {
-  status: string;
-  statusCode: number | string;
-  statusMessage: string;
-  data: SubModuleDevAllocation[];
-}
+import apiClient from "../lib/api";
+import { ENDPOINTS } from "../utils/apiendpoint";
+export const allocateDevToSubModule = async (subModuleId: number, data: any) => { 
+  const payload = typeof data === 'number' ? { employeeId: data, userId: data } : (data && typeof data === 'object' ? { employeeId: data.employeeId || data.userId, userId: data.userId || data.employeeId, ...data } : data);
+  const r = await apiClient.post(ENDPOINTS.subModuleDev(subModuleId), payload); 
+  return r.data; 
+};
+export const deallocateDevFromSubModule = async (moduleId: number, employeeId: number) => { const r = await apiClient.delete(ENDPOINTS.subModuleDevDelete(moduleId,employeeId)); return r.data; };
+export const getAllSubmoduleAllocatedDevBySubmoduleId = async (subModuleId: number) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.subModuleDev(subModuleId));
+    const raw = r.data?.data ?? r.data ?? [];
+    const list: any = Array.isArray(raw) ? raw : [];
+    list.data = list;
+    return list;
+  } catch {
+    const empty: any = [];
+    empty.data = empty;
+    return empty;
+  }
+};
 
 export interface SubModuleDevAllocation {
-  id: number | string;
-  employeeId: number | string;
-  submoduleId: number | string;
+  id?: number;
+  subModuleId: number;
+  employeeId: number;
   employeeName?: string;
+  roleId?: number;
+  roleName?: string;
 }
 
-export const getAllSubmoduleAllocatedDevBySubmoduleId = async (
-  subModuleId: number
-): Promise<SubModuleDevResponse> => {
-  const users = mockDb.getUsers();
-  return {
-    status: 'success',
-    statusCode: 200,
-    statusMessage: 'Success',
-    data: users.slice(0, 2).map(u => ({
-      id: u.id,
-      employeeId: u.id,
-      submoduleId: subModuleId,
-      employeeName: `${u.firstName} ${u.lastName}`,
-    })),
-  };
-};
-
-export const allocateProjectEmployeeToSubModule = async (
-  subModuleId: number,
-  employeeId: number
-): Promise<SubModuleDevResponse> => {
-  const user = mockDb.getUserById(employeeId);
-  return {
-    status: 'success',
-    statusCode: 200,
-    statusMessage: 'Developer allocated to submodule successfully',
-    data: [{
-      id: employeeId,
-      employeeId,
-      submoduleId: subModuleId,
-      employeeName: user ? `${user.firstName} ${user.lastName}` : 'Developer',
-    }],
-  };
-};
-
-export const deAllocateProjectEmployeeFromSubModule = async (
-  subModuleId: number,
-  employeeId: number
-): Promise<SubModuleDevResponse> => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    statusMessage: 'Developer deallocated from submodule successfully',
-    data: [],
-  };
-};
+export const allocateProjectEmployeeToSubModule = allocateDevToSubModule;
+export const deAllocateProjectEmployeeFromSubModule = deallocateDevFromSubModule;

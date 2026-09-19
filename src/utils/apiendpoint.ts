@@ -6,8 +6,11 @@ export const ENDPOINTS = {
   designationById: (id: number) => `${BASE}/designation/${id}`,
   designationEmployee: (designationId: number) =>
     `${BASE}/designation/${designationId}/employee`,
+  designationEmployees: (designationId: number) =>
+    `${BASE}/designation/${designationId}/employee`,
 
- role:(page :number, size: number) => `${BASE}/role?page=${page}&size=${size}&direction=DESC&sort=id`,
+  role: `${BASE}/role`,
+  rolePagination: (page: number, size: number) => `${BASE}/role?page=${page}&size=${size}&direction=DESC&sort=id`,
   roleById: (id: number) => `${BASE}/role/${id}`,
 
   permission: `${BASE}/permission`,
@@ -120,6 +123,10 @@ testCaseBySubModule: (subModuleId: number, description?: string, defectTypeId?: 
 },
   testCaseById: (subModuleId: number, id: number) =>
     `${BASE}/sub-module/${subModuleId}/test-case/${id}`,
+  testCaseByModule: (moduleId: number | string) =>
+    `${BASE}/module/${moduleId}/test-case`,
+  testCaseByProject: (projectId: number | string) =>
+    `${BASE}/project/${projectId}/test-case`,
   testCaseAll: `${BASE}/test-case`,
   testCaseBulkBySubModule: (subModuleId: number) =>
     `${BASE}/sub-module/${subModuleId}/test-case/bulk`,

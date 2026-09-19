@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -46,7 +46,7 @@ import { getDefectTypes } from "../api/defectType";
 
 import { TestCase as TestCaseType } from "../types/index";
 
-import { allocateTestCaseToRelease, allocateTestCaseToMultipleReleases, bulkAllocateTestCasesToReleases, allocateTestCasesToManyReleases, getReleaseTestCasesByFiltersGroup, getQaAllocationSummary, getQaEngineerTestCases } from "../api/releasetestcase";
+import { allocateTestCaseToRelease, allocateTestCaseToMultipleReleases, bulkAllocateTestCasesToReleases, allocateTestCasesToManyReleases, getReleaseTestCases, getReleaseTestCasesByFiltersGroup, getQaAllocationSummary, getQaEngineerTestCases } from "../api/releasetestcase";
 
 import { getModulesByProjectId } from "../api/module/getModule";
 
@@ -61,6 +61,13 @@ import { getAllProjects } from "../api/projectget";
 
 
 const BASE_URL = import.meta.env.VITE_BASE_URL;
+
+const EMPTY: any[] = [];
+const unwrapList = (res: any): any[] =>
+  Array.isArray(res) ? res
+  : Array.isArray(res?.data) ? res.data
+  : Array.isArray(res?.data?.data) ? res.data.data
+  : [];
 
 
 
@@ -131,55 +138,55 @@ export const Allocation: React.FC = () => {
   } = useApp();
 
 
-const [projects, setProjects] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
 
-const {
-  projects: userProjects,
-  isAdmin,
-  switchProject,
-  selectedProjectId: permissionProjectId,
-} = usePermission();
+  const {
+    projects: userProjects,
+    isAdmin,
+    switchProject,
+    selectedProjectId: permissionProjectId,
+  } = usePermission();
 
-useEffect(() => {
-  if (!projectId) return;
+  useEffect(() => {
+    if (!projectId) return;
 
-  const id = Number(projectId);
+    const id = Number(projectId);
 
-  if (permissionProjectId !== id) {
-    switchProject(id);
-  }
-}, [projectId, permissionProjectId]);
-
-useEffect(() => {
-  const loadProjects = async () => {
-    try {
-      if (isAdmin) {
-        const response = await getAllProjects();
-
-        setProjects(
-          Array.isArray(response?.data)
-            ? response.data
-            : Array.isArray(response)
-            ? response
-            : []
-        );
-      } else {
-        setProjects(
-          userProjects.map((p) => ({
-            id: String(p.projectId),
-            name: p.projectName,
-            projectName: p.projectName,
-          }))
-        );
-      }
-    } catch (error) {
-      console.error("Error loading projects:", error);
-      setProjects([]);
+    if (permissionProjectId !== id) {
+      switchProject(id);
     }
-  };
+  }, [projectId, permissionProjectId]);
 
-  loadProjects();
-}, [isAdmin, userProjects]);
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        if (isAdmin) {
+          const response = await getAllProjects();
+
+          setProjects(
+            Array.isArray(response?.data)
+              ? response.data
+              : Array.isArray(response)
+                ? response
+                : []
+          );
+        } else {
+          setProjects(
+            userProjects.map((p) => ({
+              id: String(p.projectId),
+              name: p.projectName,
+              projectName: p.projectName,
+            }))
+          );
+        }
+      } catch (error) {
+        console.error("Error loading projects:", error);
+        setProjects([]);
+      }
+    };
+
+    loadProjects();
+  }, [isAdmin, userProjects]);
 
   const [modulesByProject, setModulesByProject] = useState<Record<string, { id: string, name: string, submodules: { id: string, name: string }[] }[]>>({});
 
@@ -210,10 +217,6 @@ useEffect(() => {
   const [bulkSubmoduleSelect, setBulkSubmoduleSelect] = useState<boolean>(false);
 
   const [selectedSubmodules, setSelectedSubmodules] = useState<string[]>([]);
-
-  const [submodules, setSubmodules] = useState<Submodule[]>([]);
-
-  const [submoduleError, setSubmoduleError] = useState<string>("");
 
   const [bulkSubmodules, setBulkSubmodules] = useState<BulkSubmodule[]>([]);
 
@@ -302,7 +305,61 @@ useEffect(() => {
 
   const [releaseTestCaseCountsError, setReleaseTestCaseCountsError] = useState<string | null>(null);
 
+  const [allocatedTcIdsByRelease, setAllocatedTcIdsByRelease] = useState<Record<string, Set<string>>>({});
+  const [lastAllocatedReleaseId, setLastAllocatedReleaseId] = useState<string | number>("");
 
+  const fetchAllocatedForReleases = useCallback(async (releaseIds: string[]) => {
+    if (!releaseIds || releaseIds.length === 0) return;
+    try {
+      const results: Record<string, Set<string>> = {};
+      await Promise.all(
+        releaseIds.map(async (relId) => {
+          try {
+            const rows = await getReleaseTestCases(Number(relId));
+            const idSet = new Set<string>();
+            const list = Array.isArray(rows) ? rows : (rows as any)?.data ?? [];
+            list.forEach((r: any) => {
+              if (r.id != null) idSet.add(String(r.id));
+              if (r.testcaseId != null) idSet.add(String(r.testcaseId));
+              if (r.testCaseId != null) idSet.add(String(r.testCaseId));
+              if (r.testCase?.id != null) idSet.add(String(r.testCase.id));
+              if (r.testCaseNo != null) idSet.add(String(r.testCaseNo));
+              if (r.no != null) idSet.add(String(r.no));
+            });
+            results[String(relId)] = idSet;
+          } catch (err) {
+            console.error(`Error loading allocated test cases for release ${relId}:`, err);
+          }
+        })
+      );
+      setAllocatedTcIdsByRelease((prev) => ({ ...prev, ...results }));
+    } catch (error) {
+      console.error("Error in fetchAllocatedForReleases:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedReleaseIds.length > 0) {
+      void fetchAllocatedForReleases(selectedReleaseIds);
+    }
+  }, [selectedReleaseIds, fetchAllocatedForReleases]);
+
+  const isTestCaseAllocated = useCallback((tc: any): boolean => {
+    if (selectedReleaseIds.length === 0) return false;
+    const tcIdStr = String(tc.id);
+    const tcNoStr = String(tc.testcaseNo || tc.testCaseId || tc.no || "");
+
+    const checkAllocatedInRelease = (relId: string) => {
+      const set = allocatedTcIdsByRelease[relId];
+      if (!set) return false;
+      return set.has(tcIdStr) || (tcNoStr ? set.has(tcNoStr) : false);
+    };
+
+    if (allocationMode === "one-to-many" || allocationMode === "many-to-many") {
+      return selectedReleaseIds.every(relId => checkAllocatedInRelease(relId));
+    }
+    return checkAllocatedInRelease(selectedReleaseIds[0]);
+  }, [selectedReleaseIds, allocatedTcIdsByRelease, allocationMode]);
 
   React.useEffect(() => {
 
@@ -395,13 +452,13 @@ useEffect(() => {
 
     try {
 
-      
 
-      
 
-      
 
-      
+
+
+
+
 
     } catch (error) {
 
@@ -417,7 +474,7 @@ useEffect(() => {
 
 
 
-  
+
 
   const fetchAllocatedTestCases = async (params: allocated_testcases) => {
 
@@ -452,7 +509,7 @@ useEffect(() => {
   };
 
 
-  
+
   const fetchTestCasesByModuleSubmoduleRelease = async (
     projectId: number,
     releaseId: number,
@@ -479,9 +536,9 @@ useEffect(() => {
       console.log("API Response:", response);
 
       if (response.status === "success" && response.data) {
-        
+
         const mappedTestCases = response.data.map((tc: any) => ({
-          id: tc.id, 
+          id: tc.id,
           testCaseId: tc.testCaseId,
           description: tc.description || 'No description',
           steps: tc.steps || 'No steps',
@@ -512,136 +569,142 @@ useEffect(() => {
   };
 
 
-const fetchTestCasesByModule = async (projectId: string, moduleId: string) => {
-  setLoadingModuleTestCases(true);
-  try {
-    const response = await getTestCasesByProjectAndModule(projectId, moduleId);
-    
-    if (response && Array.isArray(response)) {
-      const mapped = response.map((tc: any) => ({
-        ...tc,
-        id: tc.id, 
-        testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id), 
-        severity: tc.severityName || "",
-        type: tc.defectTypeName || "",
-      })) as TestCaseType[];
+  const fetchTestCasesByModule = async (projectId: string, moduleId: string) => {
+    setLoadingModuleTestCases(true);
+    try {
+      const subIds = (
+        effectiveModules.find((m: any) => String(m.id) === String(moduleId))
+          ?.submodules ?? []
+      ).map((sm: any) => sm.id);
+      const response = await getTestCasesByProjectAndModule(projectId, moduleId, subIds);
 
-      setAllocatedTestCases(mapped);
-      setSelectedTestCases([]);
-      console.log("Module test cases mapped:", mapped);
-      return mapped;
+      if (response && Array.isArray(response)) {
+        const mapped = response.map((tc: any) => ({
+          ...tc,
+          id: tc.id,
+          testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id),
+          severity: tc.severityName || "",
+          type: tc.defectTypeName || "",
+        })) as TestCaseType[];
+
+        setAllocatedTestCases(mapped);
+        setSelectedTestCases([]);
+        console.log("Module test cases mapped:", mapped);
+        return mapped;
+      }
+      return [];
+    } catch (error) {
+      console.error("Error:", error);
+      setAllocatedTestCases([]);
+      return [];
+    } finally {
+      setLoadingModuleTestCases(false);
     }
-    return [];
-  } catch (error) {
-    console.error("Error:", error);
-    setAllocatedTestCases([]);
-    return [];
-  } finally {
-    setLoadingModuleTestCases(false);
-  }
-};
+  };
 
-// Function to fetch test cases by submodule (for release allocation)
-const fetchTestCasesBySubmodule = async (projectId: string, submoduleId: string) => {
-  setLoadingSubmoduleTestCases(true);
-  try {
-    const response = await getTestCasesByProjectAndSubmodule(projectId, submoduleId);
+  // Function to fetch test cases by submodule (for release allocation)
+  const fetchTestCasesBySubmodule = async (projectId: string, submoduleId: string) => {
+    setLoadingSubmoduleTestCases(true);
+    try {
+      const response = await getTestCasesByProjectAndSubmodule(projectId, submoduleId);
 
-    if (response && Array.isArray(response)) {
-      const mapped = response.map((tc: any) => ({
-        ...tc,
-        id: tc.id,
-        testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id), 
-        severity: tc.severityName || "",
-        type: tc.defectTypeName || "",
-      })) as TestCaseType[];
+      if (response && Array.isArray(response)) {
+        const mapped = response.map((tc: any) => ({
+          ...tc,
+          id: tc.id,
+          testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id),
+          severity: tc.severityName || "",
+          type: tc.defectTypeName || "",
+        })) as TestCaseType[];
 
-      setAllocatedTestCases(mapped);
-      setSelectedTestCases([]);
-      console.log("Submodule test cases mapped:", mapped);
-      return mapped;
+        setAllocatedTestCases(mapped);
+        setSelectedTestCases([]);
+        console.log("Submodule test cases mapped:", mapped);
+        return mapped;
+      }
+      return [];
+    } catch (error) {
+      console.error("Error:", error);
+      setAllocatedTestCases([]);
+      return [];
+    } finally {
+      setLoadingSubmoduleTestCases(false);
     }
-    return [];
-  } catch (error) {
-    console.error("Error:", error);
-    setAllocatedTestCases([]);
-    return [];
-  } finally {
-    setLoadingSubmoduleTestCases(false);
-  }
-};
+  };
 
-// Function to fetch test cases by bulk modules (for release allocation)
-const fetchTestCasesByBulkModules = async (projectId: string, moduleIds: string[]) => {
-  setLoadingModuleTestCases(true);
-  try {
-    const numericModuleIds = moduleIds
-      .map(id => Number(id))
-      .filter(id => !isNaN(id));
+  // Function to fetch test cases by bulk modules (for release allocation)
+  const fetchTestCasesByBulkModules = async (projectId: string, moduleIds: string[]) => {
+    setLoadingModuleTestCases(true);
+    try {
+      const numericModuleIds = moduleIds
+        .map(id => Number(id))
+        .filter(id => !isNaN(id));
 
-    const response = await getTestCasesByBulkModules(projectId, numericModuleIds);
+      const response = await getTestCasesByBulkModules(projectId, numericModuleIds);
 
-    if (response && Array.isArray(response)) {
-      const mapped = response.map((tc: any) => ({
-        ...tc,
-        id: tc.id, // Keep original id for selection
-        testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id), // Display as testcaseNo
-        severity: tc.severityName || "",
-        type: tc.defectTypeName || "",
-      })) as TestCaseType[];
+      if (response && Array.isArray(response)) {
+        const mapped = response.map((tc: any) => ({
+          ...tc,
+          id: tc.id, // Keep original id for selection
+          testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id), // Display as testcaseNo
+          severity: tc.severityName || "",
+          type: tc.defectTypeName || "",
+        })) as TestCaseType[];
 
-      setAllocatedTestCases(mapped);
-      // Use id for selection (NOT testCaseId)
-      const allIds = mapped.map((tc: any) => String(tc.id));
-      setSelectedTestCases(allIds);
-      console.log("Bulk module test cases mapped:", mapped);
-      console.log("Selected test case IDs (for API):", allIds);
-      return mapped;
+        setAllocatedTestCases(mapped);
+        // Use id for selection (NOT testCaseId), excluding already allocated
+        const availableMapped = mapped.filter((tc: any) => !isTestCaseAllocated(tc));
+        const allIds = availableMapped.map((tc: any) => String(tc.id));
+        setSelectedTestCases(allIds);
+        console.log("Bulk module test cases mapped:", mapped);
+        console.log("Selected test case IDs (for API):", allIds);
+        return mapped;
+      }
+      return [];
+    } catch (error) {
+      console.error("Error fetching bulk module test cases:", error);
+      setAllocatedTestCases([]);
+      return [];
+    } finally {
+      setLoadingModuleTestCases(false);
     }
-    return [];
-  } catch (error) {
-    console.error("Error fetching bulk module test cases:", error);
-    setAllocatedTestCases([]);
-    return [];
-  } finally {
-    setLoadingModuleTestCases(false);
-  }
-};
+  };
 
-const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: string[]) => {
-  setLoadingSubmoduleTestCases(true);
-  try {
-    const numericIds = submoduleIds
-      .map(id => Number(id))
-      .filter(id => !isNaN(id));
+  const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: string[]) => {
+    setLoadingSubmoduleTestCases(true);
+    try {
+      const numericIds = submoduleIds
+        .map(id => Number(id))
+        .filter(id => !isNaN(id));
 
-    const response = await getTestCasesByBulkSubmodules(projectId, numericIds);
+      const response = await getTestCasesByBulkSubmodules(projectId, numericIds);
 
-    if (response && Array.isArray(response)) {
-      const mapped = response.map((tc: any) => ({
-        ...tc,
-        id: tc.id, 
-        testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id), 
-        severity: tc.severityName || "",
-        type: tc.defectTypeName || "",
-      })) as TestCaseType[];
+      if (response && Array.isArray(response)) {
+        const mapped = response.map((tc: any) => ({
+          ...tc,
+          id: tc.id,
+          testCaseId: tc.testcaseNo || tc.testCaseId || tc.no || String(tc.id),
+          severity: tc.severityName || "",
+          type: tc.defectTypeName || "",
+        })) as TestCaseType[];
 
-      setAllocatedTestCases(mapped);
-      const allIds = mapped.map((tc: any) => String(tc.id));
-      setSelectedTestCases(allIds);
-      console.log("Bulk submodule test cases mapped:", mapped);
-      console.log("Selected test case IDs (for API):", allIds);
-      return mapped;
+        setAllocatedTestCases(mapped);
+        const availableMapped = mapped.filter((tc: any) => !isTestCaseAllocated(tc));
+        const allIds = availableMapped.map((tc: any) => String(tc.id));
+        setSelectedTestCases(allIds);
+        console.log("Bulk submodule test cases mapped:", mapped);
+        console.log("Selected test case IDs (for API):", allIds);
+        return mapped;
+      }
+      return [];
+    } catch (error) {
+      console.error("Error fetching bulk submodule test cases:", error);
+      setAllocatedTestCases([]);
+      return [];
+    } finally {
+      setLoadingSubmoduleTestCases(false);
     }
-    return [];
-  } catch (error) {
-    console.error("Error fetching bulk submodule test cases:", error);
-    setAllocatedTestCases([]);
-    return [];
-  } finally {
-    setLoadingSubmoduleTestCases(false);
-  }
-};
+  };
 
 
 
@@ -704,9 +767,9 @@ const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: s
 
   // Get modules for selected project from context
 
-  const projectModules = selectedProjectId ? modulesByProject[selectedProjectId] || [] : [];
-
-
+  const projectModules = selectedProjectId
+    ? modulesByProject[selectedProjectId] || EMPTY
+    : EMPTY;
 
   // Use mock data if API/server is not working
 
@@ -714,8 +777,21 @@ const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: s
 
   const effectiveTestCases = allocatedTestCases.length > 0 ? allocatedTestCases : projectTestCases;
 
-  const effectiveModules = projectModules ? projectModules || [] : []; // Use modulesByProject state
-  
+  const effectiveModules = projectModules;
+
+  const submodules = useMemo(() => {
+    const mod = effectiveModules.find((m: any) => m.name === selectedModule);
+    return (mod?.submodules ?? []).map((sm: any) => ({
+      ...sm,
+      subModuleId: Number(sm.id),
+    }));
+  }, [effectiveModules, selectedModule]);
+
+  const submoduleError =
+    selectedModule && effectiveModules.length > 0 && submodules.length === 0
+      ? "No submodules found for this module."
+      : "";
+
   // Debug logging for effectiveModules
   console.log("effectiveModules data:", effectiveModules);
   console.log("projectModules data:", projectModules);
@@ -736,61 +812,45 @@ const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: s
 
   }, [effectiveProjectRelease, selectedProject]);
 
- const fetchModules = async () => {
-  console.log("Fetching modules for project ID:", selectedProjectId);
-  if (!selectedProjectId) return;
-
-  try {
-    const response = await getModulesByProjectId(Number(selectedProjectId));
-    
-    if (response.data) {
+  const fetchModules = async () => {
+    if (!selectedProjectId) return;
+    try {
+      const res = await getModulesByProjectId(Number(selectedProjectId));
       const modules = await Promise.all(
-        (response.data || []).map(async (mod: any) => {
-          console.log("Mapping module:", {
-            originalId: mod.id,
-            originalName: mod.name,
-          });
-
+        unwrapList(res).map(async (mod: any) => {
+          let subs: any[] = [];
           try {
-            const subModuleResponse = await getSubmodulesByModuleId(Number(mod.id));
-            return {
-              id: mod.id,
-              name: mod.name,
-              submodules: (subModuleResponse.data || []).map((sm: any) => ({
-                id: String(sm.id),
-                name: sm.name,
-              })),
-            };
-          } catch (subError) {
-            console.error(`Failed to fetch submodules for module ${mod.id}:`, subError);
-            return {
-              id: mod.id,
-              name: mod.name,
-              submodules: [],
-            };
-          }
-        })
+            subs = unwrapList(await getSubmodulesByModuleId(Number(mod.id)));
+          } catch { /* no submodules */ }
+          return {
+            id: String(mod.id),
+            name: mod.moduleName || mod.name,
+            submodules: subs.map((sm: any) => ({
+              id: String(sm.id ?? sm.subModuleId),
+              name:
+                sm.getSubModuleName || sm.subModuleName ||
+                sm.submoduleName || sm.name || "Unnamed",
+            })),
+          };
+        }),
       );
-
-      console.log("Setting modules in state:", { projectId: selectedProjectId, modules });
       setModulesByProject((prev: any) => ({ ...prev, [selectedProjectId]: modules }));
+    } catch (error) {
+      console.error("Error fetching modules:", error);
     }
-  } catch (error) {
-    console.error("Error fetching modules:", error);
-  }
-};
+  };
 
   const fetchQAMembers = async () => {
 
     if (!selectedProjectId) return;
 
-    
+
 
     setQaMembersLoading(true);
 
     setQaMembersError(null);
 
-    
+
 
     try {
 
@@ -849,116 +909,63 @@ const fetchTestCasesByBulkSubmodules = async (projectId: string, submoduleIds: s
 
   }, [selectedProjectId]);
 
-  // Fetch submodules when selectedModule changes
 
   useEffect(() => {
-    if (!selectedModule) {
-      setSubmodules([]);
-      setSubmoduleError("");
-      return;
+    if (selectedSubmodules.length === 0 && bulkSubmoduleSelect) {
+      setBulkSubmoduleSelect(false);
     }
-    // Find the module ID from effectiveModules
-    const moduleObj = effectiveModules.find((m: any) => m.name === selectedModule);
+  }, [selectedSubmodules, bulkSubmoduleSelect]);
 
-    if (moduleObj && moduleObj.id) {
 
-      getSubmodulesByModuleId(Number(moduleObj.id))
-        .then((res) => {
+  // --- Bulk selection effect for test cases ---
+  useEffect(() => {
+    if (
+      activeTab === "release" &&
+      (bulkModuleSelect || bulkSubmoduleSelect)
+    ) {
+      const ids: Set<string> = new Set();
 
-          if ((!res.status || !['success', 'Success'].includes(res.status)) || !Array.isArray(res.data) || res.data.length === 0) {
-            setSubmodules([]);
-            setSubmoduleError(res.message || "No submodules found for this module.");
-            return;
+
+      if (bulkModuleSelect && selectedModules.length > 0) {
+        const testCasesToProcess = allocatedTestCases.length > 0 ? allocatedTestCases : effectiveTestCases;
+        const moduleSet = new Set(selectedModules.map(String));
+        testCasesToProcess.forEach((tc: any) => {
+          console.log('Test case object:', tc);
+          if (moduleSet.has(String(tc.moduleId))) {
+
+            ids.add(String(tc.id));
           }
-          // Normalize submodule name property for UI
-          const normalized = (res.data || []).map((sm: any) => ({
-            ...sm,
-
-            subModuleId: Number(sm.id || sm.subModuleId),
-
-            name: sm.name || sm.subModuleName || sm.submoduleName || "Unnamed"
-
-          }));
-
-          setSubmodules(normalized);
-
-          setSubmoduleError("");
-
-        })
-
-        .catch((err) => {
-
-          setSubmodules([]);
-
-          setSubmoduleError("Failed to fetch submodules. Please try again.");
-
         });
+      }
 
+
+      if (bulkSubmoduleSelect && selectedSubmodules.length > 0) {
+        const testCasesToProcess = allocatedTestCases.length > 0 ? allocatedTestCases : effectiveTestCases;
+        const submoduleSet = new Set(selectedSubmodules.map(String));
+        testCasesToProcess.forEach((tc: any) => {
+          console.log('Test case object:', tc);
+          if (submoduleSet.has(String(tc.subModuleId))) {
+
+            ids.add(String(tc.id));
+          }
+        });
+      }
+
+      console.log("Selected Test Case IDs (for API):", Array.from(ids));
+      setSelectedTestCases(Array.from(ids));
     } else {
-
-      setSubmodules([]);
-
-      setSubmoduleError("Module not found.");
-
+      setBulkSubmoduleWarning("");
     }
-
-  }, [selectedModule]);
-  useEffect(() => {
-  if (selectedSubmodules.length === 0 && bulkSubmoduleSelect) {
-    setBulkSubmoduleSelect(false);
-  }
-}, [selectedSubmodules, bulkSubmoduleSelect]);
-
-
-// --- Bulk selection effect for test cases ---
-useEffect(() => {
-  if (
-    activeTab === "release" &&
-    (bulkModuleSelect || bulkSubmoduleSelect)
-  ) {
-    const ids: Set<string> = new Set();
-
-    
-    if (bulkModuleSelect && selectedModules.length > 0) {
-      const testCasesToProcess = allocatedTestCases.length > 0 ? allocatedTestCases : effectiveTestCases;
-      const moduleSet = new Set(selectedModules.map(String));
-      testCasesToProcess.forEach((tc: any) => {
-        console.log('Test case object:', tc);
-        if (moduleSet.has(String(tc.moduleId))) {
-          
-          ids.add(String(tc.id));
-        }
-      });
-    }
-
-    
-    if (bulkSubmoduleSelect && selectedSubmodules.length > 0) {
-      const testCasesToProcess = allocatedTestCases.length > 0 ? allocatedTestCases : effectiveTestCases;
-      const submoduleSet = new Set(selectedSubmodules.map(String));
-      testCasesToProcess.forEach((tc: any) => {
-        console.log('Test case object:', tc);
-        if (submoduleSet.has(String(tc.subModuleId))) {
-          
-          ids.add(String(tc.id));
-        }
-      });
-    }
-
-    console.log("Selected Test Case IDs (for API):", Array.from(ids));
-    setSelectedTestCases(Array.from(ids));
-  } else {
-    setBulkSubmoduleWarning("");
-  }
-}, [
-  bulkModuleSelect,
-  bulkSubmoduleSelect,
-  selectedModules,
-  selectedSubmodules,
-  // effectiveTestCases,
-  allocatedTestCases,
-  activeTab,
-  selectedReleaseIds,
-]);
+  }, [
+    bulkModuleSelect,
+    bulkSubmoduleSelect,
+    selectedModules,
+    selectedSubmodules,
+    // effectiveTestCases,
+    allocatedTestCases,
+    activeTab,
+    selectedReleaseIds,
+  ]);
 
   // --- Fetch bulk submodules when multiple modules are selected ---
 
@@ -998,15 +1005,15 @@ useEffect(() => {
 
             console.log('Bulk submodules fetched:', bulkSubmodulesData);
 
-            
-setBulkSubmodules(bulkSubmodulesData);
+
+            setBulkSubmodules(bulkSubmodulesData);
 
 
-const normalizedBulkSubmodules = (bulkSubmodulesData || []).map((sub: any) => ({
-  ...sub,
-  subModuleId: sub.subModuleId || sub.id || sub.submoduleId, 
-}));
-setBulkSubmodules(normalizedBulkSubmodules);
+            const normalizedBulkSubmodules = (bulkSubmodulesData || []).map((sub: any) => ({
+              ...sub,
+              subModuleId: sub.subModuleId || sub.id || sub.submoduleId,
+            }));
+            setBulkSubmodules(normalizedBulkSubmodules);
 
           } catch (bulkError) {
 
@@ -1119,7 +1126,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
   // --- Fetch test cases when bulk submodules are selected ---
 
   useEffect(() => {
-  
+
 
     if (bulkSubmoduleSelect && selectedSubmodules.length > 0 && selectedProjectId) {
 
@@ -1187,7 +1194,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     if (selectedReleaseForQA) {
 
-      
+
 
       const allocatedTestCaseIds = qaAllocatedTestCases[selectedReleaseForQA] || [];
 
@@ -1201,7 +1208,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
 
 
-      
+
 
       const allocatedTestCases = effectiveTestCases.filter((tc: any) => allocatedTestCaseIds.includes(tc.id));
 
@@ -1227,17 +1234,17 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     if (bulkModuleSelect && selectedModules.length > 0) {
 
-      
+
 
       if (allocatedTestCases.length > 0) {
 
-        
+
 
         filteredTestCases = allocatedTestCases;
 
       } else {
 
-        
+
 
         effectiveTestCases.forEach((tc: any) => {
 
@@ -1253,17 +1260,17 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     if (bulkSubmoduleSelect && selectedSubmodules.length > 0) {
 
-      
+
 
       if (allocatedTestCases.length > 0) {
 
-        
+
 
         filteredTestCases = allocatedTestCases;
 
       } else {
 
-        
+
 
         effectiveTestCases.forEach((tc: any) => {
 
@@ -1279,13 +1286,13 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
   } else if (selectedSubmodule) {
 
-    
+
 
     filteredTestCases = allocatedTestCases;
 
   } else if (selectedModule) {
 
-    
+
 
     if (allocatedTestCases.length > 0) {
 
@@ -1293,19 +1300,23 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     } else {
 
-    filteredTestCases = effectiveTestCases.filter(
+      filteredTestCases = effectiveTestCases.filter(
 
-      (tc: any) => tc.module === selectedModule
+        (tc: any) => tc.module === selectedModule
 
-    );
+      );
 
     }
 
   }
 
+  if (activeTab === "release" && selectedReleaseIds.length > 0) {
+    filteredTestCases = filteredTestCases.filter((tc: any) => !isTestCaseAllocated(tc));
+  }
 
 
-  
+
+
 
   const getAllocatedTestCasesForQA = (qaId: string) => {
 
@@ -1317,7 +1328,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
 
 
-  const isTestCaseAllocated = (testCaseId: string) => {
+  const isTestCaseAllocatedToQA = (testCaseId: string) => {
 
     if (!selectedReleaseForQA) return false;
 
@@ -1347,23 +1358,23 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     try {
 
-      
 
-      
+
+
 
       const testCaseIdsAsNumbers = testCaseIds.map(id => {
 
-        
+
 
         if (typeof id === 'number') return id;
 
 
 
-        
+
 
         return parseInt(String(id), 10);
 
-      }).filter(id => !isNaN(id)); 
+      }).filter(id => !isNaN(id));
 
 
 
@@ -1387,7 +1398,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
       if (response.status === "success" || response.statusCode === 2000) {
 
-        
+
 
         setQaAllocations(prev => ({
 
@@ -1457,7 +1468,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
 
 
-  
+
 
   const handleProjectSelect = (id: string) => {
 
@@ -1521,15 +1532,15 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
     setQaAllocationSuccess(null);
 
-    
+
     setQaReleaseTestCases([]);
     setQaReleaseTestCasesError(null);
 
-    
+
     setLoadingModuleTestCases(false);
     setLoadingSubmoduleTestCases(false);
 
-    
+
     setBulkModuleSelect(false);
     setBulkSubmoduleSelect(false);
     setSelectedModules([]);
@@ -1540,7 +1551,7 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
 
 
-  
+
 
   const ProjectSelectionPanel = () => (
 
@@ -1550,19 +1561,12 @@ setBulkSubmodules(normalizedBulkSubmodules);
 
       selectedProjectId={selectedProjectId || null}
 
-      onSelect={
-
-        (id: string) => {
-
-          setSelectedProjectId(id),
-
-            handleProjectSelect(id)
-
-        }
-
-
-
-      }
+      onSelect={(id: string) => {
+        switchProject(Number(id));
+        setSelectedProjectId(id);
+        handleProjectSelect(id);
+        navigate(`/projects/${id}/releases/allocation`);
+      }}
 
       className="mb-4"
 
@@ -1571,366 +1575,374 @@ setBulkSubmodules(normalizedBulkSubmodules);
   );
 
 
-const handleAllocate = async () => {
-  if (selectedReleaseIds.length === 0 || selectedTestCases.length === 0) {
-    setAllocationError("Please select at least one release and test case.");
-    return;
-  }
-
-  setAllocationLoading(true);
-  setAllocationError(null);
-  setAllocationSuccess(null);
-  setAllocationProgress(null);
-
-  try {
-if (allocationMode === "one-to-one") {
-  const total = selectedReleaseIds.length * selectedTestCases.length;
-  let completed = 0;
-  let totalAllocated = 0;
-  let totalFailed = 0;
-  const failedDetails: { testCaseId: string; testCaseNo: string; releaseId: number; error: string }[] = [];
-  
-  const releaseNames = selectedIds.map(id => {
-    const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
-    return release?.releaseName || release?.name || `Release ${id}`;
-  });
-  
-  const releaseNameMap = new Map<number, string>();
-  selectedIds.forEach((id, index) => {
-    releaseNameMap.set(Number(id), releaseNames[index]);
-  });
-  
-  const testCaseMap = new Map<string, string>();
-  effectiveTestCases.forEach((tc: any) => {
-    testCaseMap.set(String(tc.id), tc.testcaseNo || tc.testCaseId || String(tc.id));
-  });
-  
-  for (const releaseId of selectedIds) {
-    for (const testCaseId of selectedTestCases) {
-      const testCaseNo = testCaseMap.get(String(testCaseId)) || testCaseId;
-      
-      try {
-        const response = await allocateTestCaseToRelease(Number(releaseId), Number(testCaseId));
-        const allocated = response?.data?.data || response?.data || response || [];
-        if (Array.isArray(allocated) && allocated.length > 0) {
-          totalAllocated++;
-        }
-      } catch (error: any) {
-        totalFailed++;
-        let errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
-        
-        errorMessage = errorMessage.replace(/Test case \d+/, `Test case ${testCaseNo}`);
-        
-        failedDetails.push({
-          testCaseId: String(testCaseId),
-          testCaseNo: String(testCaseNo),
-          releaseId: Number(releaseId),
-          error: errorMessage
-        });
-      }
-      completed++;
-      setAllocationProgress({ current: completed, total });
+  const handleAllocate = async () => {
+    if (selectedReleaseIds.length === 0 || selectedTestCases.length === 0) {
+      setAllocationError("Please select at least one release and test case.");
+      return;
     }
-  }
-  
-  let message = '';
-  if (totalAllocated > 0 && totalFailed === 0) {
-    message = `✅ ${totalAllocated} allocation(s) completed successfully!`;
-  } else if (totalAllocated > 0 && totalFailed > 0) {
-    message = `⚠️ ${totalAllocated} allocation(s) completed. ${totalFailed} failed.\n\n`;
-    failedDetails.forEach(detail => {
-      const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
-      message += `❌ ${detail.error} → ${releaseName}\n`;
-    });
-  } else if (totalAllocated === 0 && totalFailed > 0) {
-    message = `❌ All allocations failed.\n\n`;
-    failedDetails.forEach(detail => {
-      const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
-      message += `❌ ${detail.error} → ${releaseName}\n`;
-    });
-  } else {
-    message = `❌ No test cases were allocated. All selected test cases may already be allocated.`;
-  }
-  
-  if (totalAllocated === 0) {
-    showAlert(message);
-    setAllocationLoading(false);
+
+    setAllocationLoading(true);
+    setAllocationError(null);
+    setAllocationSuccess(null);
     setAllocationProgress(null);
-    return;
-  } else {
-    showAlert(message);
-  }
-} else if (allocationMode === "one-to-many") {
-  const total = selectedTestCases.length;
-  let completed = 0;
-  let totalAllocated = 0;
-  let totalFailed = 0;
-  const failedDetails: { testCaseId: string; testCaseNo: string; releaseId: number; error: string }[] = [];
-  
-  const releaseNames = selectedIds.map(id => {
-    const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
-    return release?.releaseName || release?.name || `Release ${id}`;
-  });
-  
-  const releaseNameMap = new Map<number, string>();
-  selectedIds.forEach((id, index) => {
-    releaseNameMap.set(Number(id), releaseNames[index]);
-  });
-  
-  // Create a map to get testCaseNo from testCaseId
-  const testCaseMap = new Map<string, string>();
-  effectiveTestCases.forEach((tc: any) => {
-    testCaseMap.set(String(tc.id), tc.testcaseNo || tc.testCaseId || String(tc.id));
-  });
-  
-  for (const testCaseId of selectedTestCases) {
-    const testCaseNo = testCaseMap.get(String(testCaseId)) || testCaseId;
-    
+
     try {
-      const response = await allocateTestCaseToMultipleReleases(testCaseId, selectedIds);
-      
-      totalAllocated += response.results.length;
-      totalFailed += response.failed.length;
-      
-      response.failed.forEach(f => {
-        // Extract testCaseNo from error message if available
-        let errorMsg = f.error;
-        // Try to extract test case number from error message
-        const testCaseMatch = errorMsg.match(/Test case (\d+)/);
-        if (testCaseMatch) {
-          // Replace the numeric ID with testCaseNo in the error message
-          errorMsg = errorMsg.replace(/Test case \d+/, `Test case ${testCaseNo}`);
-        }
-        
-        failedDetails.push({
-          testCaseId: String(testCaseId),
-          testCaseNo: String(testCaseNo),
-          releaseId: Number(f.releaseId),
-          error: errorMsg // Use modified error message
-        });
-      });
-      
-    } catch (error) {
-      console.error(`Failed to allocate test case ${testCaseId}:`, error);
-      totalFailed += selectedIds.length;
-    }
-    completed++;
-    setAllocationProgress({ current: completed, total });
-  }
-  
-  // Build message
-  let message = '';
-  if (totalAllocated > 0 && totalFailed === 0) {
-    message = `✅ ${totalAllocated} test case(s) allocated successfully to ${selectedIds.length} release(s)!`;
-  } else if (totalAllocated > 0 && totalFailed > 0) {
-    message = `⚠️ ${totalAllocated} allocation(s) completed. ${totalFailed} failed.\n\n`;
-    failedDetails.forEach(detail => {
-      const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
-      message += `❌ ${detail.error} → ${releaseName}\n`;
-    });
-  } else if (totalAllocated === 0 && totalFailed > 0) {
-    message = `❌ All allocations failed.\n\n`;
-    failedDetails.forEach(detail => {
-      const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
-      message += `❌ ${detail.error} → ${releaseName}\n`;
-    });
-  } else {
-    message = `❌ No test cases were allocated. All selected test cases may already be allocated.`;
-  }
-  
-  if (totalAllocated === 0) {
-    showAlert(message);
-    setAllocationLoading(false);
-    setAllocationProgress(null);
-    return;
-  } else {
-    showAlert(message);
-  }
-}else if (allocationMode === "bulk") {
-      setAllocationProgress({ current: 0, total: 1 });
-      
-      const releaseName = selectedIds.map(id => {
-        const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
-        return release?.releaseName || release?.name || `Release ${id}`;
-      })[0];
-      
-      const response = await bulkAllocateTestCasesToReleases(
-        selectedTestCases,
-        selectedIds[0]
-      );
+      if (allocationMode === "one-to-one") {
+        const total = selectedReleaseIds.length * selectedTestCases.length;
+        let completed = 0;
+        let totalAllocated = 0;
+        let totalFailed = 0;
+        const failedDetails: { testCaseId: string; testCaseNo: string; releaseId: number; error: string }[] = [];
 
-      const allocatedTestCases = response?.data?.data || response?.data || response || [];
-      const totalRequested = selectedTestCases.length;
-      const successfullyAllocated = Array.isArray(allocatedTestCases) ? allocatedTestCases.length : 0;
-      const skipped = totalRequested - successfullyAllocated;
-      
-      let message = "";
-      if (successfullyAllocated === 0 && skipped > 0) {
-        message = `📊 Allocation Summary:\n\n`;
-        message += `ℹ️ Release "${releaseName}": 0 new test cases allocated, ${skipped} already existed.\n`;
-      } else if (successfullyAllocated > 0 && skipped > 0) {
-        message = `📊 Allocation Summary:\n\n`;
-        message += `✅ Release "${releaseName}": ${successfullyAllocated} new test case(s) successfully allocated, ${skipped} already existed.\n`;
-      } else if (successfullyAllocated > 0 && skipped === 0) {
-        message = `📊 Allocation Summary:\n\n`;
-        message += `✅ Release "${releaseName}": ${successfullyAllocated} new test case(s) successfully allocated.\n`;
-      } else {
-        message = `❌ No test cases were allocated. Please check your selection.`;
-      }
-      
-      showAlert(message);
-      setAllocationProgress({ current: 1, total: 1 });
-
-      if (successfullyAllocated === 0) {
-        setAllocationLoading(false);
-        setAllocationProgress(null);
-        return;
-      }
-
-    // MANY-TO-MANY: Multiple Releases, Multiple Test Cases
-    } else if (allocationMode === "many-to-many") {
-      setAllocationProgress({ current: 0, total: 1 });
-      
-      const getReleaseNames = () => {
-        return selectedIds.map(id => {
+        const releaseNames = selectedIds.map(id => {
           const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
           return release?.releaseName || release?.name || `Release ${id}`;
         });
-      };
 
-      const response = await allocateTestCasesToManyReleases(
-        selectedIds,
-        getReleaseNames(),
-        selectedTestCases
-      );
+        const releaseNameMap = new Map<number, string>();
+        selectedIds.forEach((id, index) => {
+          releaseNameMap.set(Number(id), releaseNames[index]);
+        });
 
-      const results = Array.isArray(response) ? response : [response];
-      
-      let totalAllocated = 0;
-      const failedReleases: { name: string; error: string }[] = [];
-      
-      const releaseDetails: { name: string; allocated: number; skipped: number; allocatedTestCases: string[] }[] = [];
-      
-      results.forEach((result: any) => {
-        const releaseName = result.releaseName || `Release ${result.releaseId}`;
-        
-        if (result.status === 'fulfilled' && result.data) {
-          const allocated = result.data?.data || result.data || [];
-          const allocatedCount = Array.isArray(allocated) ? allocated.length : 0;
-          totalAllocated += allocatedCount;
-          
-          const allocatedTestCasesForRelease: string[] = [];
-          if (Array.isArray(allocated)) {
-            allocated.forEach((tc: any) => {
-              allocatedTestCasesForRelease.push(String(tc.testCaseId || tc.id));
+        const testCaseMap = new Map<string, string>();
+        effectiveTestCases.forEach((tc: any) => {
+          testCaseMap.set(String(tc.id), tc.testcaseNo || tc.testCaseId || String(tc.id));
+        });
+
+        for (const releaseId of selectedIds) {
+          for (const testCaseId of selectedTestCases) {
+            const testCaseNo = testCaseMap.get(String(testCaseId)) || testCaseId;
+
+            try {
+              const response = await allocateTestCaseToRelease(Number(releaseId), Number(testCaseId));
+              const allocated = response?.data?.data || response?.data || response || [];
+              if (Array.isArray(allocated) && allocated.length > 0) {
+                totalAllocated++;
+              }
+            } catch (error: any) {
+              totalFailed++;
+              let errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
+
+              errorMessage = errorMessage.replace(/Test case \d+/, `Test case ${testCaseNo}`);
+
+              failedDetails.push({
+                testCaseId: String(testCaseId),
+                testCaseNo: String(testCaseNo),
+                releaseId: Number(releaseId),
+                error: errorMessage
+              });
+            }
+            completed++;
+            setAllocationProgress({ current: completed, total });
+          }
+        }
+
+        let message = '';
+        if (totalAllocated > 0 && totalFailed === 0) {
+          message = `✅ ${totalAllocated} allocation(s) completed successfully!`;
+        } else if (totalAllocated > 0 && totalFailed > 0) {
+          message = `⚠️ ${totalAllocated} allocation(s) completed. ${totalFailed} failed.\n\n`;
+          failedDetails.forEach(detail => {
+            const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
+            message += `❌ ${detail.error} → ${releaseName}\n`;
+          });
+        } else if (totalAllocated === 0 && totalFailed > 0) {
+          message = `❌ All allocations failed.\n\n`;
+          failedDetails.forEach(detail => {
+            const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
+            message += `❌ ${detail.error} → ${releaseName}\n`;
+          });
+        } else {
+          message = `❌ No test cases were allocated. All selected test cases may already be allocated.`;
+        }
+
+        if (totalAllocated === 0) {
+          showAlert(message);
+          setAllocationLoading(false);
+          setAllocationProgress(null);
+          return;
+        } else {
+          showAlert(message);
+        }
+      } else if (allocationMode === "one-to-many") {
+        const total = selectedTestCases.length;
+        let completed = 0;
+        let totalAllocated = 0;
+        let totalFailed = 0;
+        const failedDetails: { testCaseId: string; testCaseNo: string; releaseId: number; error: string }[] = [];
+
+        const releaseNames = selectedIds.map(id => {
+          const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
+          return release?.releaseName || release?.name || `Release ${id}`;
+        });
+
+        const releaseNameMap = new Map<number, string>();
+        selectedIds.forEach((id, index) => {
+          releaseNameMap.set(Number(id), releaseNames[index]);
+        });
+
+        // Create a map to get testCaseNo from testCaseId
+        const testCaseMap = new Map<string, string>();
+        effectiveTestCases.forEach((tc: any) => {
+          testCaseMap.set(String(tc.id), tc.testcaseNo || tc.testCaseId || String(tc.id));
+        });
+
+        for (const testCaseId of selectedTestCases) {
+          const testCaseNo = testCaseMap.get(String(testCaseId)) || testCaseId;
+
+          try {
+            const response = await allocateTestCaseToMultipleReleases(testCaseId, selectedIds);
+
+            totalAllocated += response.results.length;
+            totalFailed += response.failed.length;
+
+            response.failed.forEach(f => {
+              // Extract testCaseNo from error message if available
+              let errorMsg = f.error;
+              // Try to extract test case number from error message
+              const testCaseMatch = errorMsg.match(/Test case (\d+)/);
+              if (testCaseMatch) {
+                // Replace the numeric ID with testCaseNo in the error message
+                errorMsg = errorMsg.replace(/Test case \d+/, `Test case ${testCaseNo}`);
+              }
+
+              failedDetails.push({
+                testCaseId: String(testCaseId),
+                testCaseNo: String(testCaseNo),
+                releaseId: Number(f.releaseId),
+                error: errorMsg // Use modified error message
+              });
+            });
+
+          } catch (error) {
+            console.error(`Failed to allocate test case ${testCaseId}:`, error);
+            totalFailed += selectedIds.length;
+          }
+          completed++;
+          setAllocationProgress({ current: completed, total });
+        }
+
+        // Build message
+        let message = '';
+        if (totalAllocated > 0 && totalFailed === 0) {
+          message = `✅ ${totalAllocated} test case(s) allocated successfully to ${selectedIds.length} release(s)!`;
+        } else if (totalAllocated > 0 && totalFailed > 0) {
+          message = `⚠️ ${totalAllocated} allocation(s) completed. ${totalFailed} failed.\n\n`;
+          failedDetails.forEach(detail => {
+            const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
+            message += `❌ ${detail.error} → ${releaseName}\n`;
+          });
+        } else if (totalAllocated === 0 && totalFailed > 0) {
+          message = `❌ All allocations failed.\n\n`;
+          failedDetails.forEach(detail => {
+            const releaseName = releaseNameMap.get(detail.releaseId) || `Release ${detail.releaseId}`;
+            message += `❌ ${detail.error} → ${releaseName}\n`;
+          });
+        } else {
+          message = `❌ No test cases were allocated. All selected test cases may already be allocated.`;
+        }
+
+        if (totalAllocated === 0) {
+          showAlert(message);
+          setAllocationLoading(false);
+          setAllocationProgress(null);
+          return;
+        } else {
+          showAlert(message);
+        }
+      } else if (allocationMode === "bulk") {
+        setAllocationProgress({ current: 0, total: 1 });
+
+        const releaseName = selectedIds.map(id => {
+          const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
+          return release?.releaseName || release?.name || `Release ${id}`;
+        })[0];
+
+        const response = await bulkAllocateTestCasesToReleases(
+          selectedTestCases,
+          selectedIds[0]
+        );
+
+        const allocatedTestCases = response?.data?.data || response?.data || response || [];
+        const totalRequested = selectedTestCases.length;
+        const successfullyAllocated = Array.isArray(allocatedTestCases) ? allocatedTestCases.length : 0;
+        const skipped = totalRequested - successfullyAllocated;
+
+        let message = "";
+        if (successfullyAllocated === 0 && skipped > 0) {
+          message = `📊 Allocation Summary:\n\n`;
+          message += `ℹ️ Release "${releaseName}": 0 new test cases allocated, ${skipped} already existed.\n`;
+        } else if (successfullyAllocated > 0 && skipped > 0) {
+          message = `📊 Allocation Summary:\n\n`;
+          message += `✅ Release "${releaseName}": ${successfullyAllocated} new test case(s) successfully allocated, ${skipped} already existed.\n`;
+        } else if (successfullyAllocated > 0 && skipped === 0) {
+          message = `📊 Allocation Summary:\n\n`;
+          message += `✅ Release "${releaseName}": ${successfullyAllocated} new test case(s) successfully allocated.\n`;
+        } else {
+          message = `❌ No test cases were allocated. Please check your selection.`;
+        }
+
+        showAlert(message);
+        setAllocationProgress({ current: 1, total: 1 });
+
+        if (successfullyAllocated === 0) {
+          setAllocationLoading(false);
+          setAllocationProgress(null);
+          return;
+        }
+
+        // MANY-TO-MANY: Multiple Releases, Multiple Test Cases
+      } else if (allocationMode === "many-to-many") {
+        setAllocationProgress({ current: 0, total: 1 });
+
+        const getReleaseNames = () => {
+          return selectedIds.map(id => {
+            const release = effectiveProjectRelease.find(r => (r.releaseId || r.id) === Number(id));
+            return release?.releaseName || release?.name || `Release ${id}`;
+          });
+        };
+
+        const response = await allocateTestCasesToManyReleases(
+          selectedIds,
+          getReleaseNames(),
+          selectedTestCases
+        );
+
+        const results = Array.isArray(response) ? response : [response];
+
+        let totalAllocated = 0;
+        const failedReleases: { name: string; error: string }[] = [];
+
+        const releaseDetails: { name: string; allocated: number; skipped: number; allocatedTestCases: string[] }[] = [];
+
+        results.forEach((result: any) => {
+          const releaseName = result.releaseName || `Release ${result.releaseId}`;
+
+          if (result.status === 'fulfilled' && result.data) {
+            const allocated = result.data?.data || result.data || [];
+            const allocatedCount = Array.isArray(allocated) ? allocated.length : 0;
+            totalAllocated += allocatedCount;
+
+            const allocatedTestCasesForRelease: string[] = [];
+            if (Array.isArray(allocated)) {
+              allocated.forEach((tc: any) => {
+                allocatedTestCasesForRelease.push(String(tc.testCaseId || tc.id));
+              });
+            }
+
+            const skippedForRelease = selectedTestCases.length - allocatedCount;
+            releaseDetails.push({
+              name: releaseName,
+              allocated: allocatedCount,
+              skipped: skippedForRelease,
+              allocatedTestCases: allocatedTestCasesForRelease
+            });
+
+          } else if (result.status === 'rejected') {
+            const errorMessage = result.error?.response?.data?.message ||
+              result.error?.message ||
+              'Unknown error occurred';
+            failedReleases.push({
+              name: releaseName,
+              error: errorMessage
+            });
+            releaseDetails.push({
+              name: releaseName,
+              allocated: 0,
+              skipped: selectedTestCases.length,
+              allocatedTestCases: []
             });
           }
-          
-          const skippedForRelease = selectedTestCases.length - allocatedCount;
-          releaseDetails.push({
-            name: releaseName,
-            allocated: allocatedCount,
-            skipped: skippedForRelease,
-            allocatedTestCases: allocatedTestCasesForRelease
+        });
+
+        let message = '';
+
+        if (failedReleases.length === 0 && totalAllocated > 0) {
+          message = `📊 Allocation Summary:\n\n`;
+
+          releaseDetails.forEach(detail => {
+            if (detail.allocated > 0 && detail.skipped > 0) {
+              message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated, ${detail.skipped} already existed.\n`;
+            } else if (detail.allocated > 0 && detail.skipped === 0) {
+              message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated.\n`;
+            } else if (detail.allocated === 0 && detail.skipped > 0) {
+              message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
+            } else {
+              message += `ℹ️ Release "${detail.name}": No changes made.\n`;
+            }
           });
-          
-        } else if (result.status === 'rejected') {
-          const errorMessage = result.error?.response?.data?.message || 
-                              result.error?.message || 
-                              'Unknown error occurred';
-          failedReleases.push({
-            name: releaseName,
-            error: errorMessage
+
+        } else if (failedReleases.length === 0 && totalAllocated === 0) {
+          message = `📊 Allocation Summary:\n\n`;
+          message += `ℹ️ No new test cases allocated.\n\n`;
+          releaseDetails.forEach(detail => {
+            message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
           });
-          releaseDetails.push({
-            name: releaseName,
-            allocated: 0,
-            skipped: selectedTestCases.length,
-            allocatedTestCases: []
+
+        } else if (failedReleases.length > 0 && totalAllocated > 0) {
+          message = `⚠️ Partial Success:\n\n`;
+          releaseDetails.forEach(detail => {
+            const isFailed = failedReleases.find(fr => fr.name === detail.name);
+            if (isFailed) {
+              message += `❌ Release "${detail.name}": Failed - ${isFailed.error}\n`;
+            } else if (detail.allocated > 0 && detail.skipped > 0) {
+              message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated, ${detail.skipped} already existed.\n`;
+            } else if (detail.allocated > 0) {
+              message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated.\n`;
+            } else if (detail.skipped > 0) {
+              message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
+            } else {
+              message += `ℹ️ Release "${detail.name}": No changes made.\n`;
+            }
           });
+
+        } else if (failedReleases.length > 0 && totalAllocated === 0) {
+          message = `❌ Allocation failed for all releases:\n\n`;
+          failedReleases.forEach(fr => {
+            message += `❌ Release "${fr.name}": ${fr.error}\n`;
+          });
+        } else {
+          message = `ℹ️ No changes made. All test cases were already allocated.`;
         }
-      });
-      
-      let message = '';
-      
-      if (failedReleases.length === 0 && totalAllocated > 0) {
-        message = `📊 Allocation Summary:\n\n`;
-        
-        releaseDetails.forEach(detail => {
-          if (detail.allocated > 0 && detail.skipped > 0) {
-            message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated, ${detail.skipped} already existed.\n`;
-          } else if (detail.allocated > 0 && detail.skipped === 0) {
-            message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated.\n`;
-          } else if (detail.allocated === 0 && detail.skipped > 0) {
-            message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
-          } else {
-            message += `ℹ️ Release "${detail.name}": No changes made.\n`;
-          }
-        });
-        
-      } else if (failedReleases.length === 0 && totalAllocated === 0) {
-        message = `📊 Allocation Summary:\n\n`;
-        message += `ℹ️ No new test cases allocated.\n\n`;
-        releaseDetails.forEach(detail => {
-          message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
-        });
-        
-      } else if (failedReleases.length > 0 && totalAllocated > 0) {
-        message = `⚠️ Partial Success:\n\n`;
-        releaseDetails.forEach(detail => {
-          const isFailed = failedReleases.find(fr => fr.name === detail.name);
-          if (isFailed) {
-            message += `❌ Release "${detail.name}": Failed - ${isFailed.error}\n`;
-          } else if (detail.allocated > 0 && detail.skipped > 0) {
-            message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated, ${detail.skipped} already existed.\n`;
-          } else if (detail.allocated > 0) {
-            message += `✅ Release "${detail.name}": ${detail.allocated} new test case(s) successfully allocated.\n`;
-          } else if (detail.skipped > 0) {
-            message += `ℹ️ Release "${detail.name}": 0 new test cases allocated, ${detail.skipped} already existed.\n`;
-          } else {
-            message += `ℹ️ Release "${detail.name}": No changes made.\n`;
-          }
-        });
-        
-      } else if (failedReleases.length > 0 && totalAllocated === 0) {
-        message = `❌ Allocation failed for all releases:\n\n`;
-        failedReleases.forEach(fr => {
-          message += `❌ Release "${fr.name}": ${fr.error}\n`;
-        });
-      } else {
-        message = `ℹ️ No changes made. All test cases were already allocated.`;
+
+        showAlert(message);
+        setAllocationProgress({ current: 1, total: 1 });
+
+        if (totalAllocated === 0) {
+          setAllocationLoading(false);
+          setAllocationProgress(null);
+          return;
+        }
       }
-      
-      showAlert(message);
-      setAllocationProgress({ current: 1, total: 1 });
-      
-      if (totalAllocated === 0) {
-        setAllocationLoading(false);
+
+      // Only switch to QA tab if we have allocations
+      const targetRelId = selectedReleaseIds[0] || (selectedIds.length > 0 ? String(selectedIds[0]) : "");
+      if (targetRelId) {
+        setLastAllocatedReleaseId(targetRelId);
+      }
+      if (selectedReleaseIds.length > 0) {
+        void fetchAllocatedForReleases(selectedReleaseIds);
+      }
+
+      setTimeout(() => {
+        setSelectedTestCases([]);
+        setSelectedReleaseIds([]);
+        setSelectedIds([]);
+        setActiveTab("qa");
+        setAllocationSuccess(null);
         setAllocationProgress(null);
-        return;
+      }, 1500);
+
+    } catch (error: any) {
+      let msg = error?.response?.data?.message || error?.message || "Failed.";
+      if (msg.includes("already allocated")) {
+        msg = "❌ Test case is already allocated to this release. Please select a different test case.";
       }
+      showAlert(msg);
+    } finally {
+      setAllocationLoading(false);
     }
-
-    // Only switch to QA tab if we have allocations
-    setTimeout(() => {
-      setSelectedTestCases([]);
-      setSelectedReleaseIds([]);
-      setSelectedIds([]);
-      setActiveTab("qa");
-      setAllocationSuccess(null);
-      setAllocationProgress(null);
-    }, 1500);
-
-  } catch (error: any) {
-    let msg = error?.response?.data?.message || error?.message || "Failed.";
-    if (msg.includes("already allocated")) {
-      msg = "❌ Test case is already allocated to this release. Please select a different test case.";
-    }
-    showAlert(msg);
-  } finally {
-    setAllocationLoading(false);
-  }
-};
+  };
 
   const handleSelectSubModule = (selectedSubmoduleId: string) => {
 
@@ -1957,8 +1969,8 @@ if (allocationMode === "one-to-one") {
           const releaseId = release.id;
 
           const ids = release.id;
-          console.log("effectiveProjectReleaseqqqqqq",release);
-          
+          console.log("effectiveProjectReleaseqqqqqq", release);
+
           const isSelected = selectedReleaseIds.includes(ids);
 
           return (
@@ -2164,12 +2176,12 @@ if (allocationMode === "one-to-one") {
 
                           : [...prev, String(module.id)];
 
-                        
+
                         // Clear test cases when modules are deselected in bulk mode
                         if (newSelection.length === 0) {
                           setAllocatedTestCases([]);
                         }
-                        
+
                         return newSelection;
                       });
 
@@ -2186,27 +2198,6 @@ if (allocationMode === "one-to-one") {
                       // Clear QA allocated test cases when module changes
                       setQaAllocatedTestCasesData([]);
                       setQaTestCasesError(null);
-                      
-                      // Fetch test cases for the selected module
-                      if (selectedProjectId && module.id) {
-                        console.log("Module clicked:", { 
-                          name: module.name, 
-                          id: module.id, 
-                          type: typeof module.id,
-                          selectedProjectId: selectedProjectId,
-                          typeOfProjectId: typeof selectedProjectId,
-                          effectiveModulesLength: effectiveModules.length,
-                          moduleInEffectiveModules: effectiveModules.find(m => m.name === module.name)
-                        });
-                        fetchTestCasesByModule(selectedProjectId, String(module.id));
-                      } else {
-                        console.warn("Missing required data for module selection:", { 
-                          selectedProjectId, 
-                          moduleId: module.id,
-                          moduleName: module.name,
-                          effectiveModulesLength: effectiveModules.length
-                        });
-                      }
                     }
 
                   }}
@@ -2254,21 +2245,147 @@ if (allocationMode === "one-to-one") {
 
 
   const SubmoduleSelectionPanel = () => {
-  console.log('SubmoduleSelectionPanel render:', {
-    bulkModuleSelect,
-    selectedModules,
-    bulkSubmodules,
-    bulkSubmodulesLoading
-  });
+    console.log('SubmoduleSelectionPanel render:', {
+      bulkModuleSelect,
+      selectedModules,
+      bulkSubmodules,
+      bulkSubmodulesLoading
+    });
 
-  // Show bulk submodules when in bulk module select mode
-  if (bulkModuleSelect && selectedModules.length > 0) {
+    // Show bulk submodules when in bulk module select mode
+    if (bulkModuleSelect && selectedModules.length > 0) {
+      return (
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Submodules for Selected Modules ({bulkSubmodules.length} found)
+              </h2>
+              {(allocationMode === "bulk" || allocationMode === "many-to-many") && activeTab === "release" && (
+                <Button
+                  size="sm"
+                  variant={bulkSubmoduleSelect ? "primary" : "secondary"}
+                  onClick={() => {
+                    setBulkSubmoduleSelect(v => !v);
+                    setSelectedSubmodules([]);
+                    setSelectedTestCases([]);
+                    // Clear allocated test cases when toggling bulk submodule selection
+                    setAllocatedTestCases([]);
+                  }}
+                >
+                  {bulkSubmoduleSelect ? "Cancel Bulk Submodules" : "Bulk Select SubModules"}
+                </Button>
+              )}
+            </div>
+
+            {bulkSubmodulesLoading && (
+              <div className="text-center py-4">
+                <div className="text-gray-500">Loading submodules...</div>
+              </div>
+            )}
+
+            {!bulkSubmodulesLoading && bulkSubmodules.length === 0 && (
+              <div className="text-center py-4">
+                <div className="text-gray-500 italic">
+                  No submodules found for selected modules
+                  <br />
+                  <small className="text-xs">
+                    Selected modules: {selectedModules.join(', ')} | Project: {selectedProjectId}
+                  </small>
+                </div>
+              </div>
+            )}
+
+            {!bulkSubmodulesLoading && bulkSubmodules.length > 0 && (
+              <>
+                {!bulkSubmoduleSelect && (
+                  <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                    <div className="text-sm text-yellow-800">
+                      💡 Click on any submodule to start bulk selection, or use the "Bulk Select SubModules" button above
+                    </div>
+                  </div>
+                )}
+
+                {bulkSubmoduleSelect && selectedSubmodules.length > 0 && (
+                  <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="text-sm text-blue-800">
+                      ✅ {selectedSubmodules.length} submodule(s) selected
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {selectedModules.map(moduleId => {
+                    const moduleSubmodules = bulkSubmodules.filter(sub => sub.moduleId === Number(moduleId));
+                    const moduleName = moduleSubmodules[0]?.moduleName || `Module ${moduleId}`;
+
+                    if (moduleSubmodules.length === 0) return null;
+
+                    return (
+                      <div key={moduleId} className="border rounded-lg p-3 bg-gray-50">
+                        <h4 className="font-medium text-gray-800 mb-2">{moduleName}</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {moduleSubmodules.map(submodule => {
+                            const isSelected = bulkSubmoduleSelect
+                              ? selectedSubmodules.includes(String(submodule.subModuleId))
+                              : false;
+
+                            return (
+                              <Button
+                                key={submodule.subModuleId}
+                                size="sm"
+                                variant={isSelected ? "primary" : "secondary"}
+                                onClick={() => {
+                                  // Always allow selection/deselection when bulkSubmoduleSelect is true
+                                  if (bulkSubmoduleSelect) {
+                                    setSelectedSubmodules((prev) => {
+                                      const submoduleId = String(submodule.subModuleId);
+                                      let newSelection;
+                                      if (prev.includes(submoduleId)) {
+                                        newSelection = prev.filter((s) => s !== submoduleId);
+                                      } else {
+                                        newSelection = [...prev, submoduleId];
+                                      }
+
+                                      // If no submodules selected, clear test cases
+                                      if (newSelection.length === 0) {
+                                        setAllocatedTestCases([]);
+                                        setSelectedTestCases([]);
+                                      }
+
+                                      return newSelection;
+                                    });
+                                  } else {
+                                    // If bulkSubmoduleSelect is false, enable it and select this submodule
+                                    setBulkSubmoduleSelect(true);
+                                    setSelectedSubmodules([String(submodule.subModuleId)]);
+                                  }
+                                }}
+                                className={`${isSelected ? "ring-2 ring-blue-400 border-blue-500" : ""}`}
+                              >
+                                {submodule.subModuleName}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // Original single module submodule selection
     return (
       <Card className="mb-4">
         <CardContent className="p-4">
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-lg font-semibold text-gray-900">
-              Submodules for Selected Modules ({bulkSubmodules.length} found)
+              Submodule Selection
             </h2>
             {(allocationMode === "bulk" || allocationMode === "many-to-many") && activeTab === "release" && (
               <Button
@@ -2278,216 +2395,90 @@ if (allocationMode === "one-to-one") {
                   setBulkSubmoduleSelect(v => !v);
                   setSelectedSubmodules([]);
                   setSelectedTestCases([]);
-                  // Clear allocated test cases when toggling bulk submodule selection
                   setAllocatedTestCases([]);
                 }}
+
               >
-                {bulkSubmoduleSelect ? "Cancel Bulk Submodules" : "Bulk Select SubModules"}
+                {bulkSubmoduleSelect ? "Cancel Bulk" : "Bulk Select"}
               </Button>
             )}
           </div>
+          {submoduleError && (
+            <div className="mb-2 text-red-600 text-sm">{submoduleError}</div>
+          )}
+          <div className="relative flex items-center">
+            <button
+              onClick={() => {
+                const container = document.getElementById("submodule-scroll");
+                if (container) container.scrollLeft -= 200;
+              }}
+              className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 mr-2"
+            >
+              <ChevronLeft className="w-5 h-5 text-gray-600" />
+            </button>
+            <div
+              id="submodule-scroll"
+              className="flex space-x-2 overflow-x-auto pb-2 scroll-smooth flex-1"
+              style={{
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+                maxWidth: "100%",
+              }}
+            >
+              {submodules.map((submodule: any) => {
+                const isSelected = bulkSubmoduleSelect
+                  ? selectedSubmodules.includes(String(submodule.subModuleId))
+                  : selectedSubmodule === String(submodule.subModuleId);
+                return (
+                  <Button
+                    key={submodule.subModuleId}
+                    variant={isSelected ? "primary" : "secondary"}
+                    onClick={() => {
+                      if (bulkSubmoduleSelect) {
+                        setSelectedSubmodules((prev) => {
+                          const submoduleId = String(submodule.subModuleId);
+                          let newSelection;
+                          if (prev.includes(submoduleId)) {
+                            newSelection = prev.filter((s) => s !== submoduleId);
+                          } else {
+                            newSelection = [...prev, submoduleId];
+                          }
 
-          {bulkSubmodulesLoading && (
-            <div className="text-center py-4">
-              <div className="text-gray-500">Loading submodules...</div>
+                          if (newSelection.length === 0) {
+                            setAllocatedTestCases([]);
+                            setSelectedTestCases([]);
+                          }
+
+                          return newSelection;
+                        });
+                      } else {
+                        setQaAllocatedTestCasesData([]);
+                        setQaTestCasesError(null);
+                        handleSelectSubModule(String(submodule.subModuleId));
+                        setSelectedSubmodule(String(submodule.subModuleId));
+                      }
+                    }}
+                    className={`whitespace-nowrap m-2 ${isSelected ? " ring-2 ring-blue-400 border-blue-500" : ""}`}
+                  >
+                    {submodule.name}
+                  </Button>
+                );
+              })}
             </div>
-          )}
-
-          {!bulkSubmodulesLoading && bulkSubmodules.length === 0 && (
-            <div className="text-center py-4">
-              <div className="text-gray-500 italic">
-                No submodules found for selected modules
-                <br />
-                <small className="text-xs">
-                  Selected modules: {selectedModules.join(', ')} | Project: {selectedProjectId}
-                </small>
-              </div>
-            </div>
-          )}
-
-          {!bulkSubmodulesLoading && bulkSubmodules.length > 0 && (
-            <>
-              {!bulkSubmoduleSelect && (
-                <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <div className="text-sm text-yellow-800">
-                    💡 Click on any submodule to start bulk selection, or use the "Bulk Select SubModules" button above
-                  </div>
-                </div>
-              )}
-              
-              {bulkSubmoduleSelect && selectedSubmodules.length > 0 && (
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <div className="text-sm text-blue-800">
-                    ✅ {selectedSubmodules.length} submodule(s) selected
-                  </div>
-                </div>
-              )}
-              
-              <div className="space-y-3">
-                {selectedModules.map(moduleId => {
-                  const moduleSubmodules = bulkSubmodules.filter(sub => sub.moduleId === Number(moduleId));
-                  const moduleName = moduleSubmodules[0]?.moduleName || `Module ${moduleId}`;
-
-                  if (moduleSubmodules.length === 0) return null;
-
-                  return (
-                    <div key={moduleId} className="border rounded-lg p-3 bg-gray-50">
-                      <h4 className="font-medium text-gray-800 mb-2">{moduleName}</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {moduleSubmodules.map(submodule => {
-                          const isSelected = bulkSubmoduleSelect
-                            ? selectedSubmodules.includes(String(submodule.subModuleId))
-                            : false;
-
-                          return (
-                            <Button
-                              key={submodule.subModuleId}
-                              size="sm"
-                              variant={isSelected ? "primary" : "secondary"}
-                              onClick={() => {
-                                // Always allow selection/deselection when bulkSubmoduleSelect is true
-                                if (bulkSubmoduleSelect) {
-                                  setSelectedSubmodules((prev) => {
-                                    const submoduleId = String(submodule.subModuleId);
-                                    let newSelection;
-                                    if (prev.includes(submoduleId)) {
-                                      newSelection = prev.filter((s) => s !== submoduleId);
-                                    } else {
-                                      newSelection = [...prev, submoduleId];
-                                    }
-                                    
-                                    // If no submodules selected, clear test cases
-                                    if (newSelection.length === 0) {
-                                      setAllocatedTestCases([]);
-                                      setSelectedTestCases([]);
-                                    }
-                                    
-                                    return newSelection;
-                                  });
-                                } else {
-                                  // If bulkSubmoduleSelect is false, enable it and select this submodule
-                                  setBulkSubmoduleSelect(true);
-                                  setSelectedSubmodules([String(submodule.subModuleId)]);
-                                }
-                              }}
-                              className={`${isSelected ? "ring-2 ring-blue-400 border-blue-500" : ""}`}
-                            >
-                              {submodule.subModuleName}
-                            </Button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+            <button
+              onClick={() => {
+                const container = document.getElementById("submodule-scroll");
+                if (container) container.scrollLeft += 200;
+              }}
+              className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 ml-2"
+            >
+              <ChevronRight className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
         </CardContent>
       </Card>
     );
-  }
-
-  // Original single module submodule selection
-  return (
-    <Card className="mb-4">
-      <CardContent className="p-4">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Submodule Selection
-          </h2>
-          {(allocationMode === "bulk" || allocationMode === "many-to-many") && activeTab === "release" && (
-            <Button
-              size="sm"
-              variant={bulkSubmoduleSelect ? "primary" : "secondary"}
-              onClick={() => {
-                setBulkSubmoduleSelect(v => !v);
-                setSelectedSubmodules([]);
-                setSelectedTestCases([]);
-                setAllocatedTestCases([]);
-              }}
-            
-            >
-              {bulkSubmoduleSelect ? "Cancel Bulk" : "Bulk Select"}
-            </Button>
-          )}
-        </div>
-        {submoduleError && (
-          <div className="mb-2 text-red-600 text-sm">{submoduleError}</div>
-        )}
-        <div className="relative flex items-center">
-          <button
-            onClick={() => {
-              const container = document.getElementById("submodule-scroll");
-              if (container) container.scrollLeft -= 200;
-            }}
-            className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 mr-2"
-          >
-            <ChevronLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div
-            id="submodule-scroll"
-            className="flex space-x-2 overflow-x-auto pb-2 scroll-smooth flex-1"
-            style={{
-              scrollbarWidth: "none",
-              msOverflowStyle: "none",
-              maxWidth: "100%",
-            }}
-          >
-            {submodules.map((submodule: any) => {
-              const isSelected = bulkSubmoduleSelect
-                ? selectedSubmodules.includes(String(submodule.subModuleId))
-                : selectedSubmodule === String(submodule.subModuleId);
-              return (
-                <Button
-                  key={submodule.subModuleId}
-                  variant={isSelected ? "primary" : "secondary"}
-                  onClick={() => {
-                    if (bulkSubmoduleSelect) {
-                      setSelectedSubmodules((prev) => {
-                        const submoduleId = String(submodule.subModuleId);
-                        let newSelection;
-                        if (prev.includes(submoduleId)) {
-                          newSelection = prev.filter((s) => s !== submoduleId);
-                        } else {
-                          newSelection = [...prev, submoduleId];
-                        }
-                        
-                        if (newSelection.length === 0) {
-                          setAllocatedTestCases([]);
-                          setSelectedTestCases([]);
-                        }
-                        
-                        return newSelection;
-                      });
-                    } else {
-  setQaAllocatedTestCasesData([]);
-  setQaTestCasesError(null);
-  handleSelectSubModule(String(submodule.subModuleId));
-  setSelectedSubmodule(String(submodule.subModuleId));
-}
-                  }}
-                  className={`whitespace-nowrap m-2 ${isSelected ? " ring-2 ring-blue-400 border-blue-500" : ""}`}
-                >
-                  {submodule.name}
-                </Button>
-              );
-            })}
-          </div>
-          <button
-            onClick={() => {
-              const container = document.getElementById("submodule-scroll");
-              if (container) container.scrollLeft += 200;
-            }}
-            className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 ml-2"
-          >
-            <ChevronRight className="w-5 h-5 text-gray-600" />
-          </button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
+  };
 
 
 
@@ -2505,11 +2496,11 @@ if (allocationMode === "one-to-one") {
 
 
 
-  
+
 
   const getSeverityColor = (severity: string): { className: string; style: React.CSSProperties } => {
 
-    
+
 
     const severityConfig = severities.find(s => s.name.toLowerCase() === severity.toLowerCase());
 
@@ -2517,7 +2508,7 @@ if (allocationMode === "one-to-one") {
 
     if (severityConfig && severityConfig.color) {
 
-      
+
 
       return {
 
@@ -2527,7 +2518,7 @@ if (allocationMode === "one-to-one") {
 
           backgroundColor: severityConfig.color,
 
-          color: '#ffffff' 
+          color: '#ffffff'
 
         }
 
@@ -2537,7 +2528,7 @@ if (allocationMode === "one-to-one") {
 
 
 
-    
+
 
     let className = "px-2 py-1 rounded-full text-xs font-medium ";
 
@@ -2589,93 +2580,97 @@ if (allocationMode === "one-to-one") {
 
 
 
-  
 
-const handleSelectAll = (checked: boolean, displayTestCases: any[]) => {
-  if (activeTab === "qa") {
-    if (!selectedReleaseForQA) return;
-    if (checked) {
-      setSelectedTestCasesForQA(prev => ({
-        ...prev,
-        [selectedReleaseForQA]: displayTestCases.map((tc: any) => String(tc.id))
-      }));
-    } else {
-      setSelectedTestCasesForQA(prev => ({
-        ...prev,
-        [selectedReleaseForQA]: []
-      }));
-    }
-  } else {
-    
-    if (allocationMode === "bulk" || allocationMode === "many-to-many") {
+
+  const handleSelectAll = (checked: boolean, displayTestCases: any[]) => {
+    if (activeTab === "qa") {
+      if (!selectedReleaseForQA) return;
       if (checked) {
-        
-        const allIds = displayTestCases.map((tc: any) => String(tc.id));
-        console.log('Selecting all test case IDs:', allIds);
-        setSelectedTestCases(allIds);
+        setSelectedTestCasesForQA(prev => ({
+          ...prev,
+          [selectedReleaseForQA]: displayTestCases.map((tc: any) => String(tc.id))
+        }));
       } else {
-        setSelectedTestCases([]);
+        setSelectedTestCasesForQA(prev => ({
+          ...prev,
+          [selectedReleaseForQA]: []
+        }));
       }
     } else {
-      
-      if (checked && displayTestCases.length > 0) {
-        setSelectedTestCases([String(displayTestCases[0].id)]);
-      } else {
-        setSelectedTestCases([]);
-      }
-    }
-  }
-};
 
-const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
-  if (activeTab === "qa") {
-    if (!selectedReleaseForQA) return;
-    if (checked) {
-      setSelectedTestCasesForQA(prev => ({
-        ...prev,
-        [selectedReleaseForQA]: [...(prev[selectedReleaseForQA] || []), testCaseId]
-      }));
-    } else {
-      setSelectedTestCasesForQA(prev => ({
-        ...prev,
-        [selectedReleaseForQA]: (prev[selectedReleaseForQA] || []).filter(id => id !== testCaseId)
-      }));
+      if (allocationMode === "bulk" || allocationMode === "many-to-many") {
+        if (checked) {
+          const unallocated = displayTestCases.filter((tc: any) => !isTestCaseAllocated(tc));
+          const allIds = unallocated.map((tc: any) => String(tc.id));
+          console.log('Selecting all test case IDs:', allIds);
+          setSelectedTestCases(allIds);
+        } else {
+          setSelectedTestCases([]);
+        }
+      } else {
+        if (checked && displayTestCases.length > 0) {
+          const firstUnallocated = displayTestCases.find((tc: any) => !isTestCaseAllocated(tc));
+          if (firstUnallocated) {
+            setSelectedTestCases([String(firstUnallocated.id)]);
+          } else {
+            setSelectedTestCases([]);
+          }
+        } else {
+          setSelectedTestCases([]);
+        }
+      }
     }
-  } else {
-    
-    if (allocationMode === "one-to-one" || allocationMode === "one-to-many") {
+  };
+
+  const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
+    if (activeTab === "qa") {
+      if (!selectedReleaseForQA) return;
       if (checked) {
-        setSelectedTestCases([testCaseId]); 
+        setSelectedTestCasesForQA(prev => ({
+          ...prev,
+          [selectedReleaseForQA]: [...(prev[selectedReleaseForQA] || []), testCaseId]
+        }));
       } else {
-        setSelectedTestCases([]);
+        setSelectedTestCasesForQA(prev => ({
+          ...prev,
+          [selectedReleaseForQA]: (prev[selectedReleaseForQA] || []).filter(id => id !== testCaseId)
+        }));
       }
     } else {
-      if (checked) {
-        setSelectedTestCases(prev => [...prev, testCaseId]);
+
+      if (allocationMode === "one-to-one" || allocationMode === "one-to-many") {
+        if (checked) {
+          setSelectedTestCases([testCaseId]);
+        } else {
+          setSelectedTestCases([]);
+        }
       } else {
-        setSelectedTestCases(prev => prev.filter(id => id !== testCaseId));
+        if (checked) {
+          setSelectedTestCases(prev => [...prev, testCaseId]);
+        } else {
+          setSelectedTestCases(prev => prev.filter(id => id !== testCaseId));
+        }
       }
     }
-  }
-};
+  };
 
 
 
-  
+
 
   const TestCaseTable = ({ testCases }: { testCases?: any[] }) => {
 
-    
+
 
     const displayTestCases = (() => {
 
       if (activeTab === "qa" && qaAllocatedTestCasesData.length > 0) {
 
-        
+
 
         return qaAllocatedTestCasesData.map((tc: allocated_testcase_details) => ({
 
-          id: tc.id, 
+          id: tc.id,
 
           testCaseId: tc.testCaseId,
 
@@ -2788,16 +2783,16 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                         }
 
- disabled={
-    activeTab !== "qa" &&
-    (allocationMode === "one-to-one" || allocationMode === "one-to-many") &&
-    !selectedTestCases.includes(String(tc.id)) &&
-    selectedTestCases.length >= 1
-  }
+                        disabled={
+                          activeTab !== "qa" &&
+                          (allocationMode === "one-to-one" || allocationMode === "one-to-many") &&
+                          !selectedTestCases.includes(String(tc.id)) &&
+                          selectedTestCases.length >= 1
+                        }
 
                         onChange={(e) =>
 
-                           handleSelectTestCase(String(tc.id), e.target.checked) 
+                          handleSelectTestCase(String(tc.id), e.target.checked)
 
                         }
 
@@ -2899,11 +2894,11 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   const releasesForQAAllocation = (() => {
 
-    
+
 
     if (releaseTestCaseCounts.length > 0) {
 
@@ -2913,7 +2908,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
         .map(apiRelease => {
 
-          
+
 
           const existingRelease = effectiveProjectRelease.find(r =>
 
@@ -2943,7 +2938,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-    
+
 
     return effectiveProjectRelease.filter((release: any) => {
 
@@ -2957,11 +2952,11 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   const QASelectionPanel = () => {
 
-    
+
 
     let allocatedRelease: any = null;
 
@@ -2977,7 +2972,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-    
+
 
     const effectiveQAEngineers = qaMembers.map(qa => ({
 
@@ -2993,16 +2988,16 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-    
+
 
     const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
-    
-    
+
+
     const [qaAllocationSummary, setQaAllocationSummary] = useState<any>(null);
     const [qaAllocationSummaryLoading, setQaAllocationSummaryLoading] = useState(false);
     const [qaAllocationSummaryError, setQaAllocationSummaryError] = useState<string | null>(null);
-    
-    
+
+
     const [qaEngineerTestCases, setQaEngineerTestCases] = useState<any[]>([]);
     const [qaEngineerTestCasesLoading, setQaEngineerTestCasesLoading] = useState(false);
     const [qaEngineerTestCasesError, setQaEngineerTestCasesError] = useState<string | null>(null);
@@ -3021,7 +3016,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
       try {
 
-        
+
 
         const moduleId = selectedModule ? Number(effectiveModules.find((m: any) => m.name === selectedModule)?.id) : 0;
 
@@ -3031,19 +3026,19 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-        
+
         if (moduleId && subModuleId && projectId) {
           console.log("Fetching test cases for release with filters:", {
-          projectId,
+            projectId,
 
             releaseId: Number(releaseId),
             moduleId,
             subModuleId
-        });
+          });
 
 
 
-          
+
           await fetchTestCasesByModuleSubmoduleRelease(
             projectId,
 
@@ -3059,7 +3054,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
             subModuleId,
             projectId
           });
-          
+
           setQaAllocatedTestCasesData([]);
         }
 
@@ -3078,7 +3073,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
     };
 
-    
+
     const fetchQaAllocationSummary = async () => {
       if (!selectedProjectId || qaMembers.length === 0) {
         setQaAllocationSummaryError("No project selected or no QA members found");
@@ -3089,11 +3084,11 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
       setQaAllocationSummaryError(null);
 
       try {
-        
+
         const qaEngineerIds = qaMembers.map(qa => qa.userId).join(',');
-        
+
         const response = await getQaAllocationSummary(qaEngineerIds);
-        
+
         if (response.status === "Success" && response.data?.allocationSummary) {
           setQaAllocationSummary(response.data.allocationSummary);
         } else {
@@ -3107,7 +3102,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
       }
     };
 
-    
+
     const fetchQaEngineerTestCases = async () => {
       if (!selectedProjectId || !selectedModule || !selectedSubmodule || !selectedReleaseForQA) {
         setQaEngineerTestCasesError("Missing required parameters for fetching test cases");
@@ -3129,7 +3124,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
         }
 
         const response = await getQaEngineerTestCases(projectId, releaseId, moduleId, subModuleId);
-        
+
         if (response.status === "success" && response.data) {
           setQaEngineerTestCases(response.data);
         } else {
@@ -3143,11 +3138,11 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
       }
     };
 
-    
+
     useEffect(() => {
       if (isSummaryModalOpen && selectedProjectId && qaMembers.length > 0) {
         fetchQaAllocationSummary();
-        
+
         if (selectedModule && selectedSubmodule && selectedReleaseForQA) {
           fetchQaEngineerTestCases();
         }
@@ -3158,7 +3153,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
       <div className="space-y-6">
 
-        {}
+        { }
 
         <Card>
 
@@ -3206,7 +3201,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                 <div className="text-sm text-blue-700">Releases with Test Cases</div>
 
-                {}
+                { }
 
                 {!releaseTestCaseCountsLoading && releaseTestCaseCounts.length > 0 && (
 
@@ -3230,7 +3225,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                 <div className="text-sm text-green-700">Total Test Cases</div>
 
-                {}
+                { }
 
                 {!releaseTestCaseCountsLoading && releaseTestCaseCounts.length > 0 && (
 
@@ -3272,7 +3267,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-        {}
+        { }
 
         <Card>
 
@@ -3296,101 +3291,99 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                 {releasesForQAAllocation.map((release: any) => {
 
-                const releaseId = release.releaseId
+                  const releaseId = release.releaseId
 
-                const ids = release.id;
+                  const ids = release.id;
 
-                const isSelected = selectedReleaseForQA === releaseId;
+                  const isSelected = selectedReleaseForQA === releaseId;
 
-                const allocatedTestCases = qaAllocatedTestCases[releaseId] || [];
+                  const allocatedTestCases = qaAllocatedTestCases[releaseId] || [];
 
-                const allocatedToQA = Object.values(qaAllocations[releaseId] || {}).flat().length;
+                  const allocatedToQA = Object.values(qaAllocations[releaseId] || {}).flat().length;
 
 
 
-                
 
-                const releaseTestCaseData = releaseTestCaseCounts.find(r => r.releaseId === releaseId);
 
-                const totalTestCases = releaseTestCaseData?.testCaseCount || allocatedTestCases.length;
+                  const releaseTestCaseData = releaseTestCaseCounts.find(r => r.releaseId === releaseId);
 
-                const remainingTestCases = totalTestCases - allocatedToQA;
+                  const totalTestCases = releaseTestCaseData?.testCaseCount || allocatedTestCases.length;
 
-                
+                  const remainingTestCases = totalTestCases - allocatedToQA;
 
-                return (
 
-                  <div
 
-                    key={releaseId}
+                  return (
 
-                    className={`min-w-[180px] px-4 py-2 rounded-md border text-left transition-all duration-200 focus:outline-none text-sm font-medium shadow-sm flex flex-col items-start relative bg-white
+                    <div
 
-                      ${
+                      key={releaseId}
 
-                        isSelected
+                      className={`min-w-[180px] px-4 py-2 rounded-md border text-left transition-all duration-200 focus:outline-none text-sm font-medium shadow-sm flex flex-col items-start relative bg-white
+
+                      ${isSelected
 
                           ? "border-blue-500 hover:border-blue-500 hover:bg-blue-50 hover:shadow-md hover:ring-1 hover:ring-blue-300"
 
                           : "border-gray-200 hover:border-blue-500 hover:bg-blue-50 hover:shadow-md hover:ring-1 hover:ring-blue-300"
 
-                      }`}
+                        }`}
 
-                    style={{
+                      style={{
 
-                      boxShadow: isSelected ? "0 0 0 2px #3b82f6" : undefined,
+                        boxShadow: isSelected ? "0 0 0 2px #3b82f6" : undefined,
 
-                    }}
-
-                  >
-
-                    <div className="truncate font-semibold mb-1">
-
-                      {releaseTestCaseData?.releaseName || release.releaseName || release.name}
-
-                    </div>
-
-                    <div className="text-xs text-gray-500 mb-1">Version: {release.version || 'N/A'}</div>
-
-                    <div className="text-xs text-gray-600 mb-2">
-
-                      {releaseTestCaseData?.testCaseCount || totalTestCases} test cases allocated
-
-                    </div>
-
-                    <div className="text-xs text-green-600 mb-2">
-
-                      {allocatedToQA} assigned to QA • {remainingTestCases} remaining
-
-                    </div>
-
-                    <Button
-
-                      size="sm"
-
-                      variant={isSelected ? "primary" : "secondary"}
-
-                      className="w-full"
-
-                      onClick={() => handleSelectReleaseForQA(release)}
-
-                      disabled={
-
-                        (allocationMode === "one-to-one" || allocationMode === "bulk") && !isSelected && selectedReleaseIds.length >= 1
-
-                      }
+                      }}
 
                     >
 
-                      {isSelected ? "Selected" : "Select"}
+                      <div className="truncate font-semibold mb-1">
 
-                    </Button>
+                        {releaseTestCaseData?.releaseName || release.releaseName || release.name}
 
-                  </div>
+                      </div>
 
-                );
+                      <div className="text-xs text-gray-500 mb-1">Version: {release.version || 'N/A'}</div>
 
-              })}
+                      <div className="text-xs text-gray-600 mb-2">
+
+                        {releaseTestCaseData?.testCaseCount || totalTestCases} test cases allocated
+
+                      </div>
+
+                      <div className="text-xs text-green-600 mb-2">
+
+                        {allocatedToQA} assigned to QA • {remainingTestCases} remaining
+
+                      </div>
+
+                      <Button
+
+                        size="sm"
+
+                        variant={isSelected ? "primary" : "secondary"}
+
+                        className="w-full"
+
+                        onClick={() => handleSelectReleaseForQA(release)}
+
+                        disabled={
+
+                          (allocationMode === "one-to-one" || allocationMode === "bulk") && !isSelected && selectedReleaseIds.length >= 1
+
+                        }
+
+                      >
+
+                        {isSelected ? "Selected" : "Select"}
+
+                      </Button>
+
+                    </div>
+
+                  );
+
+                })}
 
               </div>
 
@@ -3412,7 +3405,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-        {}
+        { }
 
         {selectedReleaseForQA && (
 
@@ -3434,7 +3427,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                 </div>
 
-                {}
+                { }
 
                 <Button
 
@@ -3460,7 +3453,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
               </div>
 
 
-              {}
+              { }
               {(!selectedModule || !selectedSubmodule) && (
                 <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <div className="text-sm font-medium text-blue-900 mb-2">
@@ -3484,7 +3477,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
               )}
 
 
-              {}
+              { }
 
               {allocatedRelease && (
 
@@ -3536,13 +3529,13 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-              {}
+              { }
 
               <div className="mb-6">
 
                 <h4 className="text-md font-semibold text-gray-800 mb-3">Select QA Engineer:</h4>
 
-                
+
 
                 {qaMembersLoading ? (
 
@@ -3623,15 +3616,15 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
               </div>
 
 
-              {}
+              { }
               {selectedReleaseForQA && selectedModule && selectedSubmodule && (
                 <div className="mb-6">
-                  {}
-                  
-                  {}
-                  {}
+                  { }
 
-                  {}
+                  { }
+                  { }
+
+                  { }
                   {qaAllocatedTestCasesData.length === 0 && !loadingQATestCases && !qaTestCasesError && (
                     <div className="mb-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
                       <div className="text-sm text-yellow-800">
@@ -3639,7 +3632,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                       </div>
                     </div>
                   )}
-                  
+
                   {loadingQATestCases ? (
                     <div className="text-center py-4">
                       <div className="text-sm text-gray-500">Loading test cases for selected filters...</div>
@@ -3657,7 +3650,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                           const moduleId = Number(effectiveModules.find((m: any) => m.name === selectedModule)?.id);
                           const subModuleId = Number(selectedSubmodule);
                           const projectId = Number(selectedProjectId);
-                          
+
                           if (moduleId && subModuleId && projectId) {
                             fetchTestCasesByModuleSubmoduleRelease(
                               projectId,
@@ -3695,7 +3688,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
               )}
 
 
-              {}
+              { }
 
               {selectedQA && selectedReleaseForQA && qaAllocatedTestCasesData.length > 0 && (selectedTestCasesForQA[selectedReleaseForQA]?.length ?? 0) > 0 && effectiveQAEngineers.length > 0 && (
                 <div className="p-4 bg-green-50 rounded-lg border border-green-200">
@@ -3714,7 +3707,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-                  {}
+                  { }
 
                   {qaAllocationSuccess && (
 
@@ -3728,7 +3721,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-                  {}
+                  { }
 
                   {qaAllocationError && (
 
@@ -3812,7 +3805,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-        {}
+        { }
 
         {selectedReleaseForQA && (() => {
 
@@ -3826,111 +3819,111 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
         })() && (
 
-          <Card>
+            <Card>
 
-            <CardContent className="p-6">
+              <CardContent className="p-6">
 
-              <div className="flex items-center space-x-3 mb-4">
+                <div className="flex items-center space-x-3 mb-4">
 
-                <div className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-sm font-semibold">
+                  <div className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-sm font-semibold">
 
-                  ✓
+                    ✓
 
-                </div>
+                  </div>
 
-                <h3 className="text-lg font-semibold text-green-900">Release Allocation Complete!</h3>
-
-              </div>
-
-              <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-
-                <div className="text-sm font-medium text-green-900 mb-2">
-
-                  All test cases for "{allocatedRelease?.releaseName || allocatedRelease?.name}" have been allocated successfully!
+                  <h3 className="text-lg font-semibold text-green-900">Release Allocation Complete!</h3>
 
                 </div>
 
-                <div className="text-sm text-green-700 mb-4">
+                <div className="p-4 bg-green-50 rounded-lg border border-green-200">
 
-                  {Object.values(qaAllocations[selectedReleaseForQA] || {}).flat().length} of {(() => {
+                  <div className="text-sm font-medium text-green-900 mb-2">
 
-                    const releaseTestCaseData = releaseTestCaseCounts.find(r => r.releaseId === selectedReleaseForQA);
+                    All test cases for "{allocatedRelease?.releaseName || allocatedRelease?.name}" have been allocated successfully!
 
-                    return releaseTestCaseData?.testCaseCount || qaAllocatedTestCases[selectedReleaseForQA]?.length || 0;
+                  </div>
 
-                  })()} test cases allocated
+                  <div className="text-sm text-green-700 mb-4">
+
+                    {Object.values(qaAllocations[selectedReleaseForQA] || {}).flat().length} of {(() => {
+
+                      const releaseTestCaseData = releaseTestCaseCounts.find(r => r.releaseId === selectedReleaseForQA);
+
+                      return releaseTestCaseData?.testCaseCount || qaAllocatedTestCases[selectedReleaseForQA]?.length || 0;
+
+                    })()} test cases allocated
+
+                  </div>
+
+                  <div className="flex gap-3">
+
+                    {releasesForQAAllocation.find((r: any) => (r.releaseId || r.id) !== selectedReleaseForQA) ? (
+
+                      <Button
+
+                        variant="primary"
+
+                        onClick={() => {
+
+                          const nextRelease = releasesForQAAllocation.find((r: any) => (r.releaseId || r.id) !== selectedReleaseForQA);
+
+                          if (nextRelease) {
+
+                            setSelectedReleaseForQA(nextRelease.releaseId || nextRelease.id);
+
+                            setSelectedQA(null);
+
+                          }
+
+                        }}
+
+                      >
+
+                        Next Release
+
+                      </Button>
+
+                    ) : (
+
+                      <Button
+
+                        variant="primary"
+
+                        onClick={() => {
+
+                          const currentProjectId = selectedProject || projectId;
+
+                          if (!currentProjectId) return;
+
+
+
+                          localStorage.setItem("mockModules", JSON.stringify(effectiveModules));
+
+                          navigate(`/projects/${currentProjectId}/releases/test-execution`);
+
+                        }}
+
+                      >
+
+                        Proceed to Test Execution
+
+                      </Button>
+
+                    )}
+
+                  </div>
 
                 </div>
 
-                <div className="flex gap-3">
+              </CardContent>
 
-                  {releasesForQAAllocation.find((r: any) => (r.releaseId || r.id) !== selectedReleaseForQA) ? (
+            </Card>
 
-                    <Button
-
-                      variant="primary"
-
-                      onClick={() => {
-
-                        const nextRelease = releasesForQAAllocation.find((r: any) => (r.releaseId || r.id) !== selectedReleaseForQA);
-
-                        if (nextRelease) {
-
-                          setSelectedReleaseForQA(nextRelease.releaseId || nextRelease.id);
-
-                          setSelectedQA(null);
-
-                        }
-
-                      }}
-
-                    >
-
-                      Next Release
-
-                    </Button>
-
-                  ) : (
-
-                    <Button
-
-                      variant="primary"
-
-                      onClick={() => {
-
-                        const currentProjectId = selectedProject || projectId;
-
-                        if (!currentProjectId) return;
-
-                        
-
-                        localStorage.setItem("mockModules", JSON.stringify(effectiveModules));
-
-                        navigate(`/projects/${currentProjectId}/releases/test-execution`);
-
-                      }}
-
-                    >
-
-                      Proceed to Test Execution
-
-                    </Button>
-
-                  )}
-
-                </div>
-
-              </div>
-
-            </CardContent>
-
-          </Card>
-
-        )}
+          )}
 
 
 
-        {}
+        { }
 
         <Modal
 
@@ -3943,7 +3936,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
           size="xl"
 
         >
-          {}
+          { }
           <div className="absolute top-4 right-4">
             <Button
               variant="secondary"
@@ -3961,7 +3954,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
           <div className="space-y-6">
 
-            {}
+            { }
             {qaAllocationSummaryLoading ? (
               <div className="text-center py-8">
                 <div className="text-sm text-gray-500">Loading QA allocation summary...</div>
@@ -3981,58 +3974,58 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
             ) : qaAllocationSummary ? (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
 
-                <div className="text-2xl font-bold text-blue-600">
+                  <div className="text-2xl font-bold text-blue-600">
 
-                  {qaAllocationSummary.totalAllocated}
+                    {qaAllocationSummary.totalAllocated}
 
-                </div>
+                  </div>
 
-                <div className="text-sm text-blue-700">Total Allocated</div>
-
-              </div>
-
-              <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-
-                <div className="text-2xl font-bold text-green-600">
-
-                  {qaAllocationSummary.qaEngineerCount}
+                  <div className="text-sm text-blue-700">Total Allocated</div>
 
                 </div>
 
-                <div className="text-sm text-green-700">QA Engineers</div>
+                <div className="bg-green-50 p-4 rounded-lg border border-green-200">
 
-              </div>
+                  <div className="text-2xl font-bold text-green-600">
 
-              <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                    {qaAllocationSummary.qaEngineerCount}
 
-                <div className="text-2xl font-bold text-purple-600">
+                  </div>
 
-                  {qaAllocationSummary.remaining}
+                  <div className="text-sm text-green-700">QA Engineers</div>
 
                 </div>
 
-                <div className="text-sm text-purple-700">Remaining</div>
+                <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+
+                  <div className="text-2xl font-bold text-purple-600">
+
+                    {qaAllocationSummary.remaining}
+
+                  </div>
+
+                  <div className="text-sm text-purple-700">Remaining</div>
+
+                </div>
 
               </div>
-
-            </div>
             ) : (
               <div className="text-center py-8">
                 <div className="text-sm text-gray-500">No summary data available</div>
               </div>
             )}
 
-            {}
-            {}
+            { }
+            { }
 
-            {}
-            {}
+            { }
+            { }
 
 
 
-            {}
+            { }
 
             <div className="space-y-4">
 
@@ -4142,7 +4135,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                               <span className="w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
                               Assigned Test Cases:
                             </div>
-                            
+
                             {/* Show detailed test case information if available */}
                             {qaEngineerTestCasesLoading ? (
                               <div className="text-center py-2">
@@ -4167,18 +4160,18 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                                   const filteredTestCases = qaEngineerTestCases.filter((testCase: any) => {
                                     const qaName = qa.name.toLowerCase();
                                     const assignedTo = testCase.assignedTo?.toLowerCase();
-                                    
+
                                     // Try to match by first name or full name
                                     const qaFirstName = qaName.split(' ')[0];
                                     const qaLastName = qaName.split(' ')[1];
-                                    
+
                                     return assignedTo && (
-                                      assignedTo.includes(qaFirstName) || 
+                                      assignedTo.includes(qaFirstName) ||
                                       (qaLastName && assignedTo.includes(qaLastName)) ||
                                       assignedTo.includes(qaName.replace(/\s+/g, ''))
                                     );
                                   });
-                                  
+
                                   // If no test cases found in detailed data, show test case IDs from allocation summary
                                   if (filteredTestCases.length === 0 && qa.testCaseIds && qa.testCaseIds.length > 0) {
                                     return qa.testCaseIds.map((testCaseId: string) => (
@@ -4197,7 +4190,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                                       </div>
                                     ));
                                   }
-                                  
+
                                   // Show filtered test cases with details
                                   return filteredTestCases.map((testCase: any) => (
                                     <div key={testCase.id} className="bg-white p-2 rounded border text-xs">
@@ -4359,7 +4352,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   useEffect(() => {
 
@@ -4369,7 +4362,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   useEffect(() => {
 
@@ -4396,8 +4389,8 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
         });
 
-        
-        
+
+
         fetchTestCasesByModuleSubmoduleRelease(
           projectId,
           Number(selectedReleaseForQA),
@@ -4412,7 +4405,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   useEffect(() => {
 
@@ -4432,24 +4425,24 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
     }
 
-    
 
-    
 
-     
+
+
+
 
   }, [allocationMode]);
 
-  
+
   useEffect(() => {
-    
+
     setSelectedTestCases([]);
-    
+
     setModeRefreshKey((k) => k + 1);
   }, [allocationMode]);
 
 
-  
+
   useEffect(() => {
     const isBulkLikeMode = allocationMode === "bulk" || allocationMode === "many-to-many";
     const isReleaseTab = activeTab === "release";
@@ -4466,7 +4459,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
   }, [allocationMode, activeTab]);
 
 
-  
+
   useEffect(() => {
     if (activeTab === "qa" && selectedReleaseForQA && selectedProjectId && selectedModule && selectedSubmodule) {
       const moduleId = Number(effectiveModules.find((m: any) => m.name === selectedModule)?.id);
@@ -4480,7 +4473,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
           moduleId,
           subModuleId
         });
-        
+
         fetchTestCasesByModuleSubmoduleRelease(
           projectId,
           Number(selectedReleaseForQA),
@@ -4491,13 +4484,13 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
     }
   }, [selectedReleaseForQA, selectedProjectId, selectedModule, selectedSubmodule, effectiveModules]);
 
-  
+
   useEffect(() => {
     if (activeTab === "qa") {
       console.log("Module or submodule changed, clearing test cases");
       setQaAllocatedTestCasesData([]);
       setQaTestCasesError(null);
-      
+
       if (selectedReleaseForQA) {
         setSelectedTestCasesForQA(prev => ({
           ...prev,
@@ -4508,7 +4501,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
   }, [selectedModule, selectedSubmodule, activeTab, selectedReleaseForQA]);
 
 
-  
+
 
   useEffect(() => {
 
@@ -4521,14 +4514,14 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
         effectiveModules: effectiveModules
       });
 
-      
+
 
       const moduleObj = effectiveModules.find((m: any) => m.name === selectedModule);
       console.log("Found module object:", moduleObj);
 
       if (moduleObj && moduleObj.id) {
 
-        
+
 
         console.log("Calling fetchTestCasesByModule from useEffect:", { projectId: selectedProjectId, moduleId: moduleObj.id });
         fetchTestCasesByModule(selectedProjectId, String(moduleObj.id));
@@ -4543,13 +4536,13 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-  
+
 
   useEffect(() => {
 
     if (!selectedProjectId || !selectedSubmodule) return;
 
-    
+
 
     fetchTestCasesBySubmodule(selectedProjectId, selectedSubmodule);
 
@@ -4561,7 +4554,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
     <div className="max-w-5xl mx-auto py-8">
 
-      {}
+      { }
 
       <div className="mb-4 flex justify-end">
 
@@ -4585,7 +4578,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-      {}
+      { }
 
       {selectedProject && activeTab === "release" && (
 
@@ -4615,13 +4608,13 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                   <ReleaseCardsPanel />
 
-                  {}
+                  { }
 
                   {selectedReleaseIds.length > 0 && (
 
                     <div className="mt-6 flex flex-col space-y-3">
 
-                      {}
+                      { }
 
                       <div className="flex items-center space-x-4">
 
@@ -4699,11 +4692,11 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-                      
 
 
 
-                      {}
+
+                      { }
 
                       <div className="flex justify-end">
 
@@ -4755,7 +4748,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-      {}
+      { }
 
       {allocationSuccess && (
 
@@ -4817,7 +4810,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-      {}
+      { }
 
       {allocationProgress && (
 
@@ -4867,7 +4860,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
 
 
-      {}
+      { }
 
       {activeTab === "release" && selectedReleaseIds.length === 1 && (
 
@@ -4915,7 +4908,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
                 <div className="mb-1">Type: {apiRelease.releaseType}</div>
 
-                {}
+                { }
 
               </CardContent>
 
@@ -4927,7 +4920,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
       )}
 
-      {}
+      { }
 
       <div className="flex space-x-4 mb-6 border-b border-gray-200">
 
@@ -4957,7 +4950,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
       </div>
 
-      {}
+      { }
 
       {activeTab === "release" ? (
 
@@ -4965,12 +4958,12 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
           {ModuleSelectionPanel()}
 
-          {}
-          {}
+          { }
+          { }
 
           {(selectedModule || (bulkModuleSelect && selectedModules.length > 0)) && <SubmoduleSelectionPanel />}
 
-          {}
+          { }
           {bulkModuleSelect && selectedModules.length > 0 && (
             <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
               <div className="text-sm text-blue-900">
@@ -4993,7 +4986,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
             </div>
           )}
 
-          {}
+          { }
           {bulkSubmoduleSelect && selectedSubmodules.length > 0 && (
             <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
               <div className="text-sm text-green-900">
@@ -5016,8 +5009,8 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
             </div>
           )}
 
-          {}
-          
+          { }
+
 
           {loadingModuleTestCases || loadingSubmoduleTestCases ? (
             <Card className="mb-4">
@@ -5041,8 +5034,8 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
                     {bulkSubmoduleSelect && selectedSubmodules.length > 0 && selectedReleaseIds.length === 0
                       ? "Please select at least one release before using bulk submodule selection."
                       : selectedModule && !selectedSubmodule && !bulkSubmoduleSelect
-                      ? "Please select a submodule or use bulk select to choose test cases."
-                      : "No test cases found for the selected submodule(s)."}
+                        ? "Please select a submodule or use bulk select to choose test cases."
+                        : "No test cases found for the selected submodule(s)."}
                   </div>
                 </CardContent>
               </Card>
@@ -5052,16 +5045,17 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
         </>
 
       ) :
-       (
+        (
 
-       <StandaloneQAAllocationTab
-        key={selectedProjectId || projectId || "no-project"}
-        projectId={selectedProjectId || projectId}
-      />
+          <StandaloneQAAllocationTab
+            key={selectedProjectId || projectId || "no-project"}
+            projectId={selectedProjectId || projectId}
+            initialReleaseId={lastAllocatedReleaseId}
+          />
 
-      )}
+        )}
 
-      {}
+      { }
 
       <Modal
 
@@ -5119,7 +5113,7 @@ const handleSelectTestCase = (testCaseId: string, checked: boolean) => {
 
       </Modal>
 
-      {}
+      { }
 
       <Modal
 

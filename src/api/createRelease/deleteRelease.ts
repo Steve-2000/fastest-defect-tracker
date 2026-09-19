@@ -1,12 +1,4 @@
-import { mockDb } from "../../mock/mockData";
-
-export async function deleteReleaseById(id: number) {
-  mockDb.deleteRelease(id);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Release deleted successfully',
-  };
-}
-
-export const deleteRelease = deleteReleaseById;
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const deleteRelease = async (id: number) => { const r = await apiClient.delete(ENDPOINTS.releaseById(id)); return r.data; };
+export const deleteReleaseById = deleteRelease;

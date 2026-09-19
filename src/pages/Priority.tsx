@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -9,7 +9,8 @@ import { useNavigate } from "react-router-dom";
 import { Toast } from "../components/ui/Toast";
 import { HexColorPicker } from "react-colorful";
 import {
-  getAllPriorities, createPriority, updatePriority, deletePriority} from "../api/priority";
+  getAllPriorities, createPriority, updatePriority, deletePriority
+} from "../api/priority";
 import { usePermission } from "../context/PermissionContext";
 import { OrbitProgress } from 'react-loading-indicators';
 
@@ -22,10 +23,10 @@ interface Priority {
 const normalizeColor = (color: string): string => {
   if (!color) return "#000000";
 
-  
+
   const cleanColor = color.replace(/[^0-9A-Fa-f]/g, "");
 
-   switch (cleanColor.length) {
+  switch (cleanColor.length) {
     case 1:
       return `#${cleanColor.repeat(6)}`;
 
@@ -50,11 +51,11 @@ const Priority: React.FC = () => {
   const navigate = useNavigate();
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [nextId, setNextId] = useState(1);
-  const [totalPages,setTotalPages]=useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
   // const totalPages = Math.ceil(priorities.length / pageSize);
- 
+
   const [toast, setToast] = useState<{
     isOpen: boolean;
     message: string;
@@ -75,34 +76,34 @@ const Priority: React.FC = () => {
   const [showColorPickerEdit, setShowColorPickerEdit] = useState(false);
   const [colorError, setColorError] = useState("");
   const [loading, setLoading] = useState(false);
-  const {can} = usePermission();
+  const { can } = usePermission();
 
-    const fetchPriorities = async (page :number, size:number) => {
-      try {
-        setLoading(true);
-        const data = await getAllPriorities(page,size);
-        setTotalPages(data.data.totalPages || 0)
-        setPriorities(data.data.content || []); 
-      } catch (error) {
-        setLoading(false)
-        showToast('Failed to load designations.', 'error');
-      } finally {
-        setLoading(false)
-      }
-    };
-  
-   useEffect(() => {
-    
-  
-    fetchPriorities(currentPage-1,pageSize);
+  const fetchPriorities = async (page: number, size: number) => {
+    try {
+      setLoading(true);
+      const data = await getAllPriorities(page, size);
+      setTotalPages(data.data.totalPages || 0)
+      setPriorities(data.data?.content || data.data?.data || data.data || []);
+    } catch (error) {
+      setLoading(false)
+      showToast('Failed to load priorities.', 'error');
+    } finally {
+      setLoading(false)
+    }
+  };
+
+  useEffect(() => {
+
+
+    fetchPriorities(currentPage - 1, pageSize);
     setToast({ isOpen: false, message: '', type: 'success' });
   }, [currentPage]);
-  
+
   useEffect(() => {
     if (isCreateModalOpen || isEditModalOpen) {
       const isDuplicate = priorities.some(
         (p) =>
-          p.color.toLowerCase() === formData.color.toLowerCase() &&
+          (p.color || "").toLowerCase() === formData.color.toLowerCase() &&
           (!editingPriority || p.id !== editingPriority.id),
       );
       setColorError(
@@ -147,38 +148,38 @@ const Priority: React.FC = () => {
     //   setIsCreateModalOpen(false);
     //   resetForm();
     //   showToast("Priority Name already exists.", "error");
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     try {
       const normalizedColor = normalizeColor(formData.color);
       const result = await createPriority({
         name: formData.name,
         color: normalizedColor,
       });
-      
+
       await fetchPriorities(currentPage - 1, pageSize);
       setIsCreateModalOpen(false);
       resetForm();
-      const successMsg = "Priority "+ result.statusMessage || "Priority created successfully!";
-      showToast(successMsg,"success");
+      const successMsg = "Priority " + result.statusMessage || "Priority created successfully!";
+      showToast(successMsg, "success");
     } catch (error: any) {
       const errorMsg =
         error.response?.data?.message || "Failed to create priority";
@@ -190,43 +191,43 @@ const Priority: React.FC = () => {
     if (!editingPriority) return;
     if (
       formData.name.trim() === editingPriority.name.trim() &&
-      formData.color.toLowerCase() === editingPriority.color.toLowerCase()
+      formData.color.toLowerCase() === (editingPriority.color || "").toLowerCase()
     ) {
       showToast("No changes were made to the priority", "error");
       return;
     }
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     try {
       const normalizedColor = normalizeColor(formData.color);
       const result = await updatePriority(editingPriority.id, {
@@ -234,43 +235,43 @@ const Priority: React.FC = () => {
         color: normalizedColor,
       });
 
-      
-      
-      
-      
-      
-      
-      
+
+
+
+
+
+
+
       await fetchPriorities(currentPage - 1, pageSize);
       setIsEditModalOpen(false);
       setEditingPriority(null);
       resetForm();
-      const successMsg = "Priority "+ result.statusMessage || "Priority updated successfully!";
-      showToast(successMsg,"success");
+      const successMsg = "Priority " + result.statusMessage || "Priority updated successfully!";
+      showToast(successMsg, "success");
 
-    } catch (error:any) {
+    } catch (error: any) {
       const errorMsg = error.response?.data?.message || "Failed to Update priority";
       showToast(errorMsg, "error");
     }
-    
+
   };
 
   const handleDelete = async () => {
     if (!deletingPriority) return;
     try {
       const result = await deletePriority(deletingPriority.id);
-      
+
       await fetchPriorities(currentPage - 1, pageSize);
       setIsDeleteModalOpen(false);
       setDeletingPriority(null);
       const successMsg = "Priority " + result.statusMessage || "Priority deleted successfully!";
-      showToast(successMsg,"success");
+      showToast(successMsg, "success");
 
-    } catch (error:any) {
+    } catch (error: any) {
       const errorMsg = error.response?.data?.message || "Failed to delete priority";
-            showToast(errorMsg, "error");
+      showToast(errorMsg, "error");
     }
-  
+
   };
 
   const openEditModal = (priority: Priority) => {
@@ -317,97 +318,97 @@ const Priority: React.FC = () => {
         <CardContent>
           {loading ? <div className="flex justify-center items-center py-20 min-h-[200px]">
             <OrbitProgress
-                variant="dotted"
-                color="#3B82F6"
-                size="medium"
-                text="Loading ..."
-                textColor="#6b7280"
+              variant="dotted"
+              color="#3B82F6"
+              size="medium"
+              text="Loading ..."
+              textColor="#6b7280"
             />
           </div> : <Table>
             <thead className="bg-gray-50">
-            <TableRow>
-              <TableCell header>Name</TableCell>
-              <TableCell header>Color</TableCell>
-              {(can.priority.edit || can.priority.delete) && <TableCell header>Actions</TableCell>}
-            </TableRow>
+              <TableRow>
+                <TableCell header>Name</TableCell>
+                <TableCell header>Color</TableCell>
+                {(can.priority.edit || can.priority.delete) && <TableCell header>Actions</TableCell>}
+              </TableRow>
             </thead>
             <TableBody>
               {priorities.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="text-center text-gray-500 py-4">
-                      No priorities found.
-                    </td>
-                  </tr>
+                <tr>
+                  <td colSpan={3} className="text-center text-gray-500 py-4">
+                    No priorities found.
+                  </td>
+                </tr>
               ) : (
-                  priorities.map((priority) => (
-                      <TableRow key={priority.id}>
-                        <TableCell className="font-medium">
-                          {priority.name}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <div
-                                className="w-4 h-4 rounded-full border border-gray-300"
-                                style={{ backgroundColor: priority.color }}
-                            />
-                            <span className="text-sm text-gray-600">
+                priorities.map((priority) => (
+                  <TableRow key={priority.id}>
+                    <TableCell className="font-medium">
+                      {priority.name}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-4 h-4 rounded-full border border-gray-300"
+                          style={{ backgroundColor: priority.color }}
+                        />
+                        <span className="text-sm text-gray-600">
                           {priority.color}
                         </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            {can.priority.edit && <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openEditModal(priority)}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </Button>}
-                            {can.priority.delete && <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openDeleteModal(priority)}
-                                className="text-red-600 hover:text-red-700"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                  ))
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        {can.priority.edit && <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditModal(priority)}
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>}
+                        {can.priority.delete && <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openDeleteModal(priority)}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
             </TableBody>
           </Table>}
         </CardContent>
       </Card>
-       {totalPages > 1 && (
-          <div className="flex justify-center items-center gap-2 py-4">
+      {totalPages > 1 && (
+        <div className="flex justify-center items-center gap-2 py-4">
+          <button
+            className="px-3 py-1 rounded border bg-gray-100 text-gray-700 disabled:opacity-50"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            Previous
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => (
             <button
-              className="px-3 py-1 rounded border bg-gray-100 text-gray-700 disabled:opacity-50"
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
+              key={i + 1}
+              className={`px-3 py-1 rounded border ${currentPage === i + 1 ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
+              onClick={() => setCurrentPage(i + 1)}
             >
-              Previous
+              {i + 1}
             </button>
-            {Array.from({ length: totalPages }, (_, i) => (
-              <button
-                key={i + 1}
-                className={`px-3 py-1 rounded border ${currentPage === i + 1 ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
-                onClick={() => setCurrentPage(i + 1)}
-              >
-                {i + 1}
-              </button>
-            ))}
-            <button
-              className="px-3 py-1 rounded border bg-gray-100 text-gray-700 disabled:opacity-50"
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-            >
-              Next
-            </button>
-          </div>
-        )}
+          ))}
+          <button
+            className="px-3 py-1 rounded border bg-gray-100 text-gray-700 disabled:opacity-50"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+          >
+            Next
+          </button>
+        </div>
+      )}
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => {
@@ -601,3 +602,6 @@ const Priority: React.FC = () => {
 };
 
 export default Priority;
+
+
+

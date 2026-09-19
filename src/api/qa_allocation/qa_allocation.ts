@@ -1,28 +1,6 @@
-import { mockDb } from '../../mock/mockData';
-
-export interface QAMember {
-  userId: number;
-  userFullName: string;
-}
-
-export interface QAMembersResponse {
-  status: string;
-  statusCode: number;
-  message: string;
-  data: QAMember[];
-}
-
-export const getQAMembersByProjectId = async (_projectId: number): Promise<QAMembersResponse> => {
-  const users = mockDb.getUsers();
-  const qaMembers = users.filter(u => u.designationName?.includes('QA') || u.roleName?.includes('QA'));
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'QA members retrieved successfully',
-    data: qaMembers.map(u => ({
-      userId: u.id,
-      userFullName: `${u.firstName} ${u.lastName}`,
-    })),
-  };
-};
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export interface QAMember { id: number; name: string; email?: string; }
+export const assignQA = async (releaseId: number, testcaseId: number, data: any) => { const r = await apiClient.post(ENDPOINTS.releaseTestCaseQaAssign(releaseId,testcaseId),data); return r.data; };
+export const getQAAllocation = async (releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.releaseTestCaseQaAllocation(releaseId)); return r.data.data??[]; } catch { return []; } };
+export const getQAMembersByProjectId = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.GET_PROJECT_ALLOCATED_EMPLOYEES(projectId)); return r.data.data??[]; } catch { return []; } };

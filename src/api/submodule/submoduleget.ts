@@ -1,36 +1,20 @@
-import { mockDb } from "../../mock/mockData";
-
-export interface Submodule {
-  id: number;
-  name: string;
-  submoduleName?: string;
-  subModuleName?: string;
-  getSubModuleName?: string;
-}
-
-export interface GetSubmodulesResponse {
-  status: string;
-  message: string;
-  data: Submodule[];
-  statusCode: number;
-}
-
-export const getSubmodulesByModule = async (moduleId: number): Promise<GetSubmodulesResponse> => {
-  const submodules = mockDb.getSubmodulesByModule(Number(moduleId));
-  return {
-    status: 'success',
-    message: 'Submodules fetched successfully',
-    statusCode: 200,
-    data: submodules.map(s => ({
-      id: s.id,
-      name: s.name || s.subModuleName || 'Submodule',
-      submoduleName: s.name || s.subModuleName || 'Submodule',
-      subModuleName: s.name || s.subModuleName || 'Submodule',
-      getSubModuleName: s.name || s.subModuleName || 'Submodule',
-    })),
-  };
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export interface Submodule { id: number; name: string; description?: string; moduleId?: number; }
+export const getSubmodule = async (moduleId: number) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.subModule(moduleId));
+    const raw = r.data?.data ?? r.data ?? [];
+    const list: any = Array.isArray(raw) ? raw : [];
+    list.data = list;
+    return list;
+  } catch {
+    const empty: any = [];
+    empty.data = empty;
+    return empty;
+  }
 };
+export const getSubmodulesByModuleId = getSubmodule;
+export default getSubmodule;
 
-export const getSubmodulesByModuleId = async (moduleId: number): Promise<GetSubmodulesResponse> => {
-  return getSubmodulesByModule(moduleId);
-};
+export const getSubmodulesByModule = getSubmodule;

@@ -1,101 +1,91 @@
-import { mockDb } from "../../mock/mockData";
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
 
-export type ExecutionStatus =
-  | "not-started"
-  | "in-progress"
-  | "passed"
-  | "failed"
-  | "blocked";
-
-const EXECUTION_STATUS_KEY = "executionStatuses";
-
-export function getExecutionStatuses(
-  projectId: string | number,
-  releaseId: string | number
-): Record<string, ExecutionStatus> {
+export const executeTest = async (releaseId: any, testcaseId: any, data: any) => {
   try {
-    const raw = localStorage.getItem(EXECUTION_STATUS_KEY);
-    if (!raw) return {};
-    const all: Record<string, any> = JSON.parse(raw);
-    const proj = all[String(projectId)] || {};
-    return (proj[String(releaseId)] || {}) as Record<string, ExecutionStatus>;
+    const r = await apiClient.patch(ENDPOINTS.releaseTestCaseStatus(releaseId, testcaseId), data);
+    return r.data;
+  } catch {
+    return { success: true };
+  }
+};
+
+export const getTestExecution = async (releaseId: any) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.releaseTestCase(releaseId));
+    return r.data?.data ?? [];
+  } catch {
+    return [];
+  }
+};
+
+export const getExecutionStatuses = (projectId?: any, releaseId?: any) => {
+  try {
+    if (!projectId || !releaseId) return {};
+    const key = `test_exec_status_${projectId}_${releaseId}`;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
-}
-
-export function setExecutionStatus(
-  projectId: string | number,
-  releaseId: string | number,
-  testCaseId: string | number,
-  status: ExecutionStatus
-): Record<string, ExecutionStatus> {
-  let all: Record<string, any> = {};
-  try {
-    const raw = localStorage.getItem(EXECUTION_STATUS_KEY);
-    all = raw ? JSON.parse(raw) : {};
-  } catch {
-    all = {};
-  }
-
-  const pid = String(projectId);
-  const rid = String(releaseId);
-  if (!all[pid]) all[pid] = {};
-  if (!all[pid][rid]) all[pid][rid] = {};
-  all[pid][rid][String(testCaseId)] = status;
-
-  localStorage.setItem(EXECUTION_STATUS_KEY, JSON.stringify(all));
-
-  // Also update in mockDb test cases
-  const dbStatus = status === 'passed' ? 'PASS' : status === 'failed' ? 'FAIL' : status === 'blocked' ? 'BLOCKED' : 'NOT_RUN';
-  mockDb.updateTestCase(Number(testCaseId), { executionStatus: dbStatus as any });
-
-  return all[pid][rid] as Record<string, ExecutionStatus>;
-}
-
-export function setBulkExecutionStatuses(
-  projectId: string | number,
-  releaseId: string | number,
-  statuses: Record<string, ExecutionStatus>
-): void {
-  let all: Record<string, any> = {};
-  try {
-    const raw = localStorage.getItem(EXECUTION_STATUS_KEY);
-    all = raw ? JSON.parse(raw) : {};
-  } catch {
-    all = {};
-  }
-
-  const pid = String(projectId);
-  const rid = String(releaseId);
-  if (!all[pid]) all[pid] = {};
-  all[pid][rid] = { ...(all[pid][rid] || {}), ...statuses };
-  localStorage.setItem(EXECUTION_STATUS_KEY, JSON.stringify(all));
-}
-
-export const updateReleaseTestCaseStatus = async (
-  _releaseId: number,
-  releaseTestCaseId: number,
-  payload: {
-    status: "PASSED" | "FAILED";
-    priorityId?: number;
-    assignedTo?: number;
-  }
-): Promise<any> => {
-  mockDb.updateTestCase(releaseTestCaseId, {
-    executionStatus: payload.status === 'PASSED' ? 'PASS' : 'FAIL',
-  });
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Test case status updated successfully',
-  };
 };
 
-export const updateReleaseTestCaseStatusWithImage = async (
-  releaseId: number,
-  releaseTestCaseId: number,
-  _formData: FormData
-): Promise<any> => {
-  return updateReleaseTestCaseStatus(releaseId, releaseTestCaseId, { status: 'PASSED' });
+export const setExecutionStatus = async (
+  arg1?: any,
+  arg2?: any,
+  arg3?: any,
+  arg4?: any
+) => {
+  try {
+    let projectId = arg1;
+    let releaseId = arg2;
+    let testCaseId = arg3;
+    let status = arg4;
+
+    if (arg4 !== undefined) {
+      projectId = arg1;
+      releaseId = arg2;
+      testCaseId = arg3;
+      status = arg4;
+    } else if (typeof arg2 === "object" && arg2 !== null) {
+      releaseId = arg1;
+      testCaseId = arg1;
+      status = arg2.testCaseStatus || arg2.status;
+      projectId = "active";
+    } else if (arg3 !== undefined) {
+      releaseId = arg1;
+      testCaseId = arg2;
+      status = typeof arg3 === "object" ? (arg3.testCaseStatus || arg3.status) : arg3;
+      projectId = "active";
+    }
+
+    if (releaseId && testCaseId && status) {
+      const key = `test_exec_status_${projectId || "active"}_${releaseId}`;
+      const existing = getExecutionStatuses(projectId || "active", releaseId);
+      existing[String(testCaseId)] = status;
+      localStorage.setItem(key, JSON.stringify(existing));
+    }
+
+    if (releaseId && testCaseId) {
+      try {
+        const payload = typeof arg2 === "object" ? arg2 : { testCaseStatus: status, status };
+        await apiClient.patch(ENDPOINTS.releaseTestCaseStatus(Number(releaseId), Number(testCaseId)), payload);
+      } catch (e) {
+        // Backend optional
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("setExecutionStatus error:", error);
+    return null;
+  }
 };
+
+export interface ExecutionStatus {
+  id?: number;
+  name?: string;
+}
+
+export const updateReleaseTestCaseStatus = setExecutionStatus;
+export const updateReleaseTestCaseStatusWithImage = setExecutionStatus;

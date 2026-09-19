@@ -1,48 +1,24 @@
-import { mockDb } from "../../mock/mockData";
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
 
-export interface Modules {
-  id: number;
-  name: string;
-  projectId: number;
-  assignedDev: {
-    userId: number;
-    userName: string;
-  } | null;
-  submodules?: any[];
-}
-
-export interface CreateReleaseResponse {
-  status: string;
-  message: string;
-  data: Modules[];
-  statusCode: number;
-}
-
-export const getModulesByProjectId = async (projectId: number): Promise<CreateReleaseResponse> => {
-  const modules = mockDb.getModules(Number(projectId));
-  return {
-    status: 'success',
-    message: 'Modules fetched successfully',
-    statusCode: 200,
-    data: modules.map(m => ({
-      id: m.id,
-      name: m.name || m.moduleName || 'Module',
-      projectId: m.projectId,
-      assignedDev: m.leaderId ? {
-        userId: m.leaderId,
-        userName: m.leaderName || 'Module Leader',
-      } : null,
-      submodules: m.submodules || [],
-    })),
-  };
+export const getModule = async (projectId: number, id: number) => {
+  const r = await apiClient.get(ENDPOINTS.moduleById(projectId, id));
+  return r.data.data ?? r.data;
 };
 
-export async function getAllocatedUsersByModuleId(moduleId: string | number) {
-  const mod = mockDb.getModuleById(Number(moduleId));
-  const users = mockDb.getUsers();
-  return users.filter(u => mod?.assignedDevs?.includes(`${u.firstName} ${u.lastName}`) || u.id === mod?.leaderId);
-}
+// Alias used by AppContext
+export const getModulesByProjectId = async (projectId: number) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.module(projectId));
+    const raw = r.data?.data ?? r.data ?? [];
+    const list: any = Array.isArray(raw) ? raw : [];
+    list.data = list;
+    return list;
+  } catch {
+    const empty: any = [];
+    empty.data = empty;
+    return empty;
+  }
+};
 
-export async function getUsersByAllocation(projectId: string | number, _moduleId: string | number, _subModuleId?: string | number) {
-  return mockDb.getUsers();
-}
+export default getModule;

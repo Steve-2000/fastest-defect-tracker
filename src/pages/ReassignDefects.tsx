@@ -118,12 +118,15 @@ export const ReassignDefects: React.FC<ReassignDefectsProps> = ({
           ? res 
           : res?.data || res?.users || [];
         const mapped = users.map((user: any) => ({
-          userId: user.employeeId || user.userId || user.id,
-          userName: user.firstName && user.lastName
-            ? `${user.firstName} ${user.lastName}`.trim()
-            : user.userName || user.name || 'Unknown User',
-          empId: user.employeeId || user.userId || user.id,
-        }));
+          userId: Number(user.employeeId || user.userId || user.id),
+          userName:
+            user.userWithRole ||
+            user.employeeName ||
+            (user.firstName && user.lastName
+              ? `${user.firstName} ${user.lastName}`.trim()
+              : user.userName || user.name || `Developer ${user.employeeId || user.userId || user.id}`),
+          empId: Number(user.employeeId || user.userId || user.id),
+        })).filter((u: any) => u.userId && u.userName);
         setProjectDevelopers(mapped);
       })
       .catch((err) => console.error("Error fetching project developers:", err));
@@ -329,25 +332,40 @@ export const ReassignDefects: React.FC<ReassignDefectsProps> = ({
         const subModuleDevRes = await getAllSubmoduleAllocatedDevBySubmoduleId(subModuleId);
         const projectDevsRaw = await getDevelopersWithRolesByProjectId(projectId);
         
-        const assignedEmployeeIds = new Set(
-          (subModuleDevRes?.data || []).map((d: any) => Number(d.employeeId))
-        );
-        
-        const users = Array.isArray(projectDevsRaw) 
-          ? projectDevsRaw 
-          : projectDevsRaw?.data || projectDevsRaw?.users || [];
-        
-        const mappedUsers = users
-          .map((user: any) => ({
-            userId: user.employeeId || user.userId || user.id,
-            userName: user.firstName && user.lastName
+        const subDevList = Array.isArray(subModuleDevRes)
+          ? subModuleDevRes
+          : (subModuleDevRes as any)?.data || [];
+
+        const allProjectDevs = users.map((user: any) => ({
+          userId: Number(user.employeeId || user.userId || user.id),
+          userName:
+            user.userWithRole ||
+            user.employeeName ||
+            (user.firstName && user.lastName
               ? `${user.firstName} ${user.lastName}`.trim()
-              : user.userName || user.name || 'Unknown User',
-            empId: user.employeeId || user.userId || user.id,
-          }))
-          .filter((u: any) => u.userId && u.userName && assignedEmployeeIds.has(Number(u.userId)));
+              : user.userName || user.name || `Developer ${user.employeeId || user.userId || user.id}`),
+          empId: Number(user.employeeId || user.userId || user.id),
+        })).filter((u: any) => u.userId && u.userName);
+
+        let finalUsers: any[] = [];
+        if (subDevList.length > 0) {
+          const assignedEmployeeIds = new Set(
+            subDevList.map((d: any) => Number(d.employeeId || d.userId || d.id)).filter(Boolean)
+          );
+          let matched = allProjectDevs.filter((u: any) => assignedEmployeeIds.has(Number(u.userId)));
+          if (matched.length === 0) {
+            matched = subDevList.map((d: any) => ({
+              userId: Number(d.employeeId || d.userId || d.id),
+              userName: d.employeeName || d.userName || d.name || `Developer ${d.employeeId || d.userId || d.id}`,
+              empId: Number(d.employeeId || d.userId || d.id),
+            })).filter((u: any) => u.userId);
+          }
+          finalUsers = matched.length > 0 ? matched : allProjectDevs;
+        } else {
+          finalUsers = allProjectDevs;
+        }
         
-        setDevelopers(mappedUsers);
+        setDevelopers(finalUsers);
         setSelectedAssignee('');
       } catch (error) {
         console.error('Failed to fetch submodule developers:', error);

@@ -1,10 +1,2 @@
-import { mockDb } from "../../mock/mockData";
-
-export async function deleteUser(id: number) {
-  mockDb.deleteUser(id);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'User deleted successfully',
-  };
-}
+﻿import apiClient from "../../lib/api"; import { ENDPOINTS } from "../../utils/apiendpoint";
+export const deleteUser = async (id) => { const r = await apiClient.delete(ENDPOINTS.employeeById(Number(id))); return r.data; };

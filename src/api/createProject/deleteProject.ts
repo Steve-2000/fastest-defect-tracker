@@ -1,10 +1,6 @@
-import { mockDb } from '../../mock/mockData';
-
-export const deleteProject = async (projectId: string | number): Promise<any> => {
-  mockDb.deleteProject(projectId);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Project deleted successfully',
-  };
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const deleteProject = async (id) => {
+  const r = await apiClient.delete(ENDPOINTS.projectById(Number(id)));
+  return r.data;
 };

@@ -1,66 +1,31 @@
-import { mockDb } from "../mock/mockData";
+import apiClient from "../lib/api";
+import { ENDPOINTS } from "../utils/apiendpoint";
+export interface Priority { id: number; name: string; color?: string; level?: number; }
+export const getPriorities = async (page=0, size=100) => { const r = await apiClient.get(ENDPOINTS.priorityPagination(page,size)); const list: Priority[]=r.data.data??r.data??[]; return {status:"success",data:{content:list,totalElements:list.length,totalPages:1,size,number:page}}; };
+export const getAllPriorities = async (page: number = 0, size: number = 100) => {
+  const r = await apiClient.get(ENDPOINTS.priority, { params: { page, size } });
+  const rawList = Array.isArray(r.data?.data)
+    ? r.data.data
+    : Array.isArray(r.data?.content)
+    ? r.data.content
+    : Array.isArray(r.data)
+    ? r.data
+    : [];
 
-export interface Priority {
-  id: number;
-  name: string;
-  color: string;
-}
-
-export interface GetPrioritiesResponse {
-  status: string;
-  message: string;
-  data: {
-    content: Priority[];
-    totalElements: number;
-    totalPages: number;
-    size: number;
-    number: number;
-  };
-}
-
-export const getAllPriorities = async (
-  _page: number = 0,
-  _pageSize: number = 100
-): Promise<GetPrioritiesResponse> => {
-  const priorities = mockDb.getPriorities();
   return {
-    status: 'success',
-    message: 'Priorities fetched successfully',
+    ...r,
     data: {
-      content: priorities.map(p => ({ id: p.id, name: p.priorityName, color: p.color })),
-      totalElements: priorities.length,
-      totalPages: 1,
-      size: 100,
-      number: 0,
+      ...r.data,
+      data: rawList,
+      content: rawList,
+      totalElements: rawList.length,
+      totalPages: Math.max(1, Math.ceil(rawList.length / (size || 10))),
+      size,
+      number: page,
     },
   };
 };
+export const createPriority = async (data: Partial<Priority>) => { const r = await apiClient.post(ENDPOINTS.priority,data); return r.data; };
+export const updatePriority = async (id: number, data: Partial<Priority>) => { const r = await apiClient.put(ENDPOINTS.priorityById(id),data); return r.data; };
+export const deletePriority = async (id: number) => { const r = await apiClient.delete(ENDPOINTS.priorityById(id)); return r.data; };
 
-export const updatePriority = async (id: number, data: { name: string; color: string }) => {
-  const updated = mockDb.updatePriority(id, data);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Priority updated successfully',
-    data: updated ? { id: updated.id, name: updated.priorityName, color: updated.color } : null,
-  };
-};
-
-export const deletePriority = async (id: number) => {
-  mockDb.deletePriority(id);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Priority deleted successfully',
-  };
-};
-
-export const createPriority = async (data: { name: string; color: string }) => {
-  const created = mockDb.createPriority(data);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Priority created successfully',
-    data: { id: created.id, name: created.priorityName, color: created.color },
-  };
-};

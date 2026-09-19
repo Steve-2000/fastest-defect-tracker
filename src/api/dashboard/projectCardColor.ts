@@ -1,14 +1,4 @@
-export function getProjectCardColor(projectId: string, risk?: 'high' | 'medium' | 'low') {
-  console.log('API: getProjectCardColor', projectId);
-
-  switch (risk) {
-    case 'high':
-      return 'bg-gradient-to-br from-red-500 via-red-600 to-red-700';
-    case 'medium':
-      return 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600';
-    case 'low':
-      return 'bg-gradient-to-br from-green-400 via-green-500 to-green-600';
-    default:
-      return 'bg-gradient-to-br from-green-400 via-green-500 to-green-600';
-  }
-}
+﻿export const getProjectCardColor = (index: number) => {
+  const colors = ["#6366f1","#0ea5e9","#f59e0b","#10b981","#ef4444","#8b5cf6"];
+  return colors[index % colors.length];
+};

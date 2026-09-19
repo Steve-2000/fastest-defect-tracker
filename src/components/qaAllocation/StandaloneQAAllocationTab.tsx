@@ -13,7 +13,12 @@ import {
   UserCheck,
   X,
 } from "lucide-react";
-import { mockDb } from "../../mock/mockData";
+import { projectReleaseCardView } from "../../api/releaseView/ProjectReleaseCardView";
+import { getModulesByProjectId } from "../../api/module/getModule";
+import { getSubmodulesByModuleId } from "../../api/submodule/submoduleget";
+import { getQAMembersByProjectId } from "../../api/qa_allocation/qa_allocation";
+import { getReleaseTestCases } from "../../api/releasetestcase";
+import { bulkAssignOwner } from "../../api/qa_allocation/qa_allocation_get_filter";
 import { Button } from "../ui/Button";
 import { Card, CardContent } from "../ui/Card";
 import { Toast } from "../ui/Toast";
@@ -77,8 +82,11 @@ interface ReleaseQaTestCase {
   testCaseNo: string;
   name: string;
   moduleId: number;
+  moduleName?: string;
   submoduleId: number;
+  subModuleName?: string;
   assignedTo: number | null;
+  assignedToName?: string;
 }
 
 type AllocationMode = "assign" | "reassign";
@@ -102,8 +110,9 @@ const unwrapList = <T,>(value: unknown): T[] => {
     if (Array.isArray(response.content)) return response.content as T[];
 
     if (response.data && typeof response.data === "object") {
-      const data = response.data as { content?: unknown };
+      const data = response.data as { content?: unknown; data?: unknown };
       if (Array.isArray(data.content)) return data.content as T[];
+      if (Array.isArray(data.data)) return data.data as T[];
     }
   }
 
@@ -190,10 +199,12 @@ const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
 
 interface StandaloneQAAllocationTabProps {
   projectId?: string | number | null;
+  initialReleaseId?: string | number | null;
 }
 
 export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps> = ({
   projectId,
+  initialReleaseId,
 }) => {
   const { projectId: routeProjectId } = useParams();
   const projectIdValue = String(projectId || routeProjectId || "");
@@ -204,7 +215,7 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
   const [qaMembers, setQaMembers] = useState<EmployeeOption[]>([]);
   const [allTestCases, setAllTestCases] = useState<ReleaseQaTestCase[]>([]);
 
-  const [selectedReleaseId, setSelectedReleaseId] = useState("");
+  const [selectedReleaseId, setSelectedReleaseId] = useState(String(initialReleaseId || ""));
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [selectedSubmoduleId, setSelectedSubmoduleId] = useState("");
 
@@ -233,6 +244,12 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
   });
   const [searchTerm, setSearchTerm] = useState("");
 
+  useEffect(() => {
+    if (initialReleaseId) {
+      setSelectedReleaseId(String(initialReleaseId));
+    }
+  }, [initialReleaseId]);
+
   // Reset everything when the project changes.
   useEffect(() => {
     setReleases([]);
@@ -241,7 +258,7 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     setQaMembers([]);
     setAllTestCases([]);
 
-    setSelectedReleaseId("");
+    setSelectedReleaseId(String(initialReleaseId || ""));
     setSelectedModuleId("");
     setSelectedSubmoduleId("");
 
@@ -263,7 +280,7 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     setQaLoading(false);
     setTestCaseLoading(false);
     setSaving(false);
-  }, [projectIdValue]);
+  }, [projectIdValue, initialReleaseId]);
 
   // Load releases + modules/submodules (used for names).
   useEffect(() => {
@@ -278,21 +295,52 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
       setMessage(null);
 
       try {
-        const releaseData = mockDb.getReleases(Number(projectIdValue)).map((release) => ({
-          ...release,
-          releaseName: release.name || release.releaseName,
+        const releaseResponse = await projectReleaseCardView(Number(projectIdValue));
+        const releaseList = Array.isArray(releaseResponse?.data)
+          ? releaseResponse.data
+          : Array.isArray(releaseResponse)
+            ? releaseResponse
+            : [];
+        const releaseData = releaseList.map((release: any) => ({
+          id: release.releaseId || release.id,
+          releaseId: release.releaseId || release.id,
+          name: release.releaseName || release.name,
+          releaseName: release.releaseName || release.name,
+          version: release.version,
         }));
         setReleases(releaseData);
 
-        const moduleData = mockDb.getModules(Number(projectIdValue));
-        const modulesWithSubmodules = moduleData.map((module) => ({
-          id: module.id,
-          name: module.name || module.moduleName || `Module ${module.id}`,
-          submodules: (module.submodules || []).map((s: any) => ({
-            id: s.id,
-            name: s.name || s.subModuleName || `Submodule ${s.id}`,
-          })),
-        }));
+        const moduleResponse = await getModulesByProjectId(Number(projectIdValue));
+        const rawModuleList = unwrapList<any>(moduleResponse);
+        const moduleList = Array.isArray(rawModuleList) && rawModuleList.length > 0
+          ? rawModuleList
+          : Array.isArray(moduleResponse?.data)
+            ? moduleResponse.data
+            : [];
+
+        const modulesWithSubmodules: ModuleOption[] = await Promise.all(
+          moduleList.map(async (module: any) => {
+            const modId = module.id || module.moduleId;
+            let submodules: SubmoduleOption[] = [];
+            if (modId) {
+              try {
+                const subRes = await getSubmodulesByModuleId(Number(modId));
+                const subList = unwrapList<any>(subRes);
+                submodules = subList.map((s: any) => ({
+                  id: s.id || s.subModuleId,
+                  name: s.name || s.subModuleName || `Submodule ${s.id || s.subModuleId}`,
+                }));
+              } catch {
+                submodules = [];
+              }
+            }
+            return {
+              id: modId,
+              name: module.name || module.moduleName || `Module ${modId}`,
+              submodules,
+            };
+          })
+        );
 
         setModules(modulesWithSubmodules);
       } catch (error) {
@@ -320,18 +368,37 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
       setQaLoading(true);
 
       try {
-        const qaRoleNames = await roleTypesBasedRoleFetch(["QA_ENGINEER","QA_LEAD"]);
-        const allowedRoles = new Set(qaRoleNames.map(normalizeRoleName));
+        const empResponse = await getQAMembersByProjectId(Number(projectIdValue));
+        const empList = Array.isArray(empResponse?.data)
+          ? empResponse.data
+          : Array.isArray(empResponse)
+            ? empResponse
+            : [];
 
-        const allUsers = mockDb.getUsers();
-        const employees = allUsers.map((u) => ({
-          id: u.id,
-          name: `${u.firstName} ${u.lastName}`,
-          roleName: u.roleName || "Developer",
-        }));
+        const employees: EmployeeOption[] = empList
+          .map((emp: any) => {
+            const id = emp.employeeId || emp.userId || emp.id || 0;
+            const name =
+              emp.employeeName ||
+              emp.userFullName ||
+              `${emp.firstName || ""} ${emp.lastName || ""}`.trim() ||
+              `Employee ${id}`;
+            const roleName = normalizeRoleName(
+              emp.roleName || emp.role?.name || emp.roleType || emp.role || ""
+            );
+            return { id, name, roleName };
+          })
+          .filter((emp: any) => emp.id > 0);
 
         setAllocatedEmployees(employees);
-        setQaMembers(employees.filter((employee) => allowedRoles.has(employee.roleName) || employee.roleName.includes("QA")));
+
+        const qaRoleNames = await roleTypesBasedRoleFetch(["QA_ENGINEER", "QA_LEAD"]);
+        const allowedRoles = new Set(qaRoleNames.map(normalizeRoleName));
+        const qaOnly = employees.filter(
+          (employee) => allowedRoles.has(employee.roleName) || employee.roleName.includes("QA")
+        );
+
+        setQaMembers(qaOnly.length > 0 ? qaOnly : employees);
       } catch (error) {
         setAllocatedEmployees([]);
         setQaMembers([]);
@@ -358,16 +425,54 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     setMessage(null);
 
     try {
-      const testCases = mockDb.getTestCases();
+      const testCases = await getReleaseTestCases(Number(selectedReleaseId));
+      const rawRows = unwrapList<any>(testCases);
+      const rows = rawRows.length > 0
+        ? rawRows
+        : Array.isArray(testCases?.data)
+          ? testCases.data
+          : Array.isArray(testCases)
+            ? testCases
+            : [];
+
       setAllTestCases(
-        testCases.map((tc) => ({
-          testcaseId: tc.id,
-          testCaseNo: tc.testcaseNo,
-          name: tc.description,
-          moduleId: tc.moduleId || 1,
-          submoduleId: tc.subModuleId || 1,
-          assignedTo: tc.assignedQaId || (tc.id % 2 === 0 ? 2 : null),
-        }))
+        rows
+          .map((tc: any) => {
+            const testcaseId = Number(tc.id ?? tc.testcaseId ?? 0);
+            const rawAssignedTo = tc.assignedTo ?? tc.assignedToId ?? tc.assignedQaId ?? null;
+            const assignedTo =
+              rawAssignedTo !== null && rawAssignedTo !== undefined && rawAssignedTo !== ""
+                ? Number(rawAssignedTo)
+                : null;
+
+            const moduleId = Number(tc.moduleId ?? tc.module?.id ?? 0);
+            const moduleName =
+              tc.moduleName ||
+              tc.module?.name ||
+              (typeof tc.module === "string" ? tc.module : "") ||
+              (moduleId ? `Module ${moduleId}` : "");
+
+            const submoduleId = Number(tc.submoduleId ?? tc.subModuleId ?? tc.submodule?.id ?? 0);
+            const subModuleName =
+              tc.subModuleName ||
+              tc.submoduleName ||
+              tc.submodule?.name ||
+              (typeof tc.subModule === "string" ? tc.subModule : "") ||
+              (submoduleId ? `Submodule ${submoduleId}` : "");
+
+            return {
+              testcaseId,
+              testCaseNo: tc.testCaseNo || tc.no || (tc.testCaseId ? String(tc.testCaseId) : `TC-${testcaseId}`),
+              name: tc.name || tc.description || tc.testCaseDescription || "No description",
+              moduleId,
+              moduleName,
+              submoduleId,
+              subModuleName,
+              assignedTo: assignedTo !== null && Number.isFinite(assignedTo) ? assignedTo : null,
+              assignedToName: tc.assignedToName || tc.assignedQaName || "",
+            };
+          })
+          .filter((tc: any) => tc.testcaseId)
       );
     } catch (error) {
       setAllTestCases([]);
@@ -390,25 +495,119 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     return map;
   }, [allocatedEmployees]);
 
-  // Modules that actually have allocated test cases.
-  const availableModules = useMemo(() => {
-    const moduleIds = new Set(allTestCases.map((testCase) => testCase.moduleId));
-    return modules.filter((module) => moduleIds.has(Number(module.id)));
+  // Unified registry of all known modules and their submodules (from project API + release test cases).
+  const allKnownModules = useMemo<ModuleOption[]>(() => {
+    const map = new Map<string, { id: string | number; name: string; submodules: Map<string, SubmoduleOption> }>();
+
+    modules.forEach((mod) => {
+      const key = String(mod.id);
+      const subMap = new Map<string, SubmoduleOption>();
+      (mod.submodules || []).forEach((sm) => {
+        subMap.set(String(sm.id), sm);
+      });
+      map.set(key, { id: mod.id, name: mod.name, submodules: subMap });
+    });
+
+    allTestCases.forEach((tc) => {
+      if (tc.moduleId) {
+        const modKey = String(tc.moduleId);
+        if (!map.has(modKey)) {
+          map.set(modKey, {
+            id: tc.moduleId,
+            name: tc.moduleName || `Module ${tc.moduleId}`,
+            submodules: new Map(),
+          });
+        } else if (tc.moduleName && map.get(modKey)!.name.startsWith("Module ")) {
+          map.get(modKey)!.name = tc.moduleName;
+        }
+
+        if (tc.submoduleId) {
+          const subKey = String(tc.submoduleId);
+          const modEntry = map.get(modKey)!;
+          if (!modEntry.submodules.has(subKey)) {
+            modEntry.submodules.set(subKey, {
+              id: tc.submoduleId,
+              name: tc.subModuleName || `Submodule ${tc.submoduleId}`,
+            });
+          } else if (tc.subModuleName && modEntry.submodules.get(subKey)!.name.startsWith("Submodule ")) {
+            modEntry.submodules.get(subKey)!.name = tc.subModuleName;
+          }
+        }
+      }
+    });
+
+    return Array.from(map.values()).map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      submodules: Array.from(entry.submodules.values()),
+    }));
   }, [modules, allTestCases]);
 
-  // Submodules with allocated test cases for the selected module.
+  const isManualMode = mode === "reassign" && manualReassign;
+
+  // Active pool of test cases for the current mode & selection.
+  const candidateTestCases = useMemo(() => {
+    if (mode === "assign") {
+      return allTestCases.filter((tc) => tc.assignedTo == null);
+    }
+    if (isManualMode && fromEmployeeId) {
+      return allTestCases.filter((tc) => tc.assignedTo === Number(fromEmployeeId));
+    }
+    return allTestCases.filter((tc) => tc.assignedTo != null);
+  }, [allTestCases, mode, isManualMode, fromEmployeeId]);
+
+  // Modules that actually have test cases matching the current mode, with release fallback.
+  const availableModules = useMemo(() => {
+    const candidateModuleIds = new Set(candidateTestCases.map((tc) => String(tc.moduleId)));
+    const active = allKnownModules.filter((mod) => candidateModuleIds.has(String(mod.id)));
+    if (active.length > 0) return active;
+
+    const allReleaseModuleIds = new Set(allTestCases.map((tc) => String(tc.moduleId)));
+    const releaseMods = allKnownModules.filter((mod) => allReleaseModuleIds.has(String(mod.id)));
+    if (releaseMods.length > 0) return releaseMods;
+
+    return allKnownModules;
+  }, [allKnownModules, candidateTestCases, allTestCases]);
+
+  // Submodules for the selected module matching current mode, with release fallback.
   const availableSubmodules = useMemo(() => {
-    const selectedModule = modules.find((module) => String(module.id) === selectedModuleId);
-    if (!selectedModule) return [];
+    if (!selectedModuleId) return [];
 
-    const submoduleIds = new Set(
-      allTestCases
-        .filter((testCase) => testCase.moduleId === Number(selectedModuleId))
-        .map((testCase) => testCase.submoduleId),
+    const selectedMod = allKnownModules.find((mod) => String(mod.id) === selectedModuleId);
+    const knownSubs = selectedMod?.submodules || [];
+
+    const candidateSubIds = new Set(
+      candidateTestCases
+        .filter((tc) => String(tc.moduleId) === selectedModuleId)
+        .map((tc) => String(tc.submoduleId))
     );
+    const activeSubs = knownSubs.filter((sm) => candidateSubIds.has(String(sm.id)));
+    if (activeSubs.length > 0) return activeSubs;
 
-    return selectedModule.submodules.filter((submodule) => submoduleIds.has(Number(submodule.id)));
-  }, [modules, allTestCases, selectedModuleId]);
+    const releaseSubIds = new Set(
+      allTestCases
+        .filter((tc) => String(tc.moduleId) === selectedModuleId)
+        .map((tc) => String(tc.submoduleId))
+    );
+    const releaseSubs = knownSubs.filter((sm) => releaseSubIds.has(String(sm.id)));
+    if (releaseSubs.length > 0) return releaseSubs;
+
+    return knownSubs;
+  }, [selectedModuleId, allKnownModules, candidateTestCases, allTestCases]);
+
+  // Auto-reset module and submodule selection if they become invalid.
+  useEffect(() => {
+    if (selectedModuleId && !availableModules.some((m) => String(m.id) === selectedModuleId)) {
+      setSelectedModuleId("");
+      setSelectedSubmoduleId("");
+    }
+  }, [availableModules, selectedModuleId]);
+
+  useEffect(() => {
+    if (selectedSubmoduleId && !availableSubmodules.some((sm) => String(sm.id) === selectedSubmoduleId)) {
+      setSelectedSubmoduleId("");
+    }
+  }, [availableSubmodules, selectedSubmoduleId]);
 
   // Employees that currently have test cases assigned (source for "From").
   const fromEmployees = useMemo(() => {
@@ -419,10 +618,12 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
           .map((testCase) => Number(testCase.assignedTo)),
       ),
     );
-    return ids.map((id) => ({ id, name: employeeNameById.get(id) || `Employee ${id}` }));
+    return ids.map((id) => {
+      const tcWithName = allTestCases.find((tc) => tc.assignedTo === id && tc.assignedToName);
+      const name = tcWithName?.assignedToName || employeeNameById.get(id) || `Employee ${id}`;
+      return { id, name };
+    });
   }, [allTestCases, employeeNameById]);
-
-  const isManualMode = mode === "reassign" && manualReassign;
 
   // Apply mode + filters + search.
   const filteredTestCases = useMemo(() => {
@@ -441,16 +642,16 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     }
 
     if (selectedModuleId) {
-      base = base.filter((testCase) => testCase.moduleId === Number(selectedModuleId));
+      base = base.filter((testCase) => String(testCase.moduleId) === selectedModuleId);
     }
     if (selectedSubmoduleId) {
-      base = base.filter((testCase) => testCase.submoduleId === Number(selectedSubmoduleId));
+      base = base.filter((testCase) => String(testCase.submoduleId) === selectedSubmoduleId);
     }
 
     const search = searchTerm.trim().toLowerCase();
     if (search) {
       base = base.filter((testCase) =>
-        [testCase.testCaseNo, testCase.name, testCase.testcaseId]
+        [testCase.testCaseNo, testCase.name, testCase.testcaseId, testCase.moduleName, testCase.subModuleName]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(search)),
       );
@@ -524,6 +725,8 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     setSelectedQaId("");
     setFromEmployeeId("");
     setToEmployeeId("");
+    setSelectedModuleId("");
+    setSelectedSubmoduleId("");
     resetSelection();
   };
 
@@ -532,6 +735,8 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     setSelectedQaId("");
     setFromEmployeeId("");
     setToEmployeeId("");
+    setSelectedModuleId("");
+    setSelectedSubmoduleId("");
     resetSelection();
   };
 
@@ -583,8 +788,11 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
     }
 
     try {
-      selectedTestCaseIds.forEach((id) => {
-        mockDb.updateTestCase(id, { assignedQaId: Number(targetEmployeeId) });
+      await bulkAssignOwner({
+        releaseId: Number(selectedReleaseId),
+        employeeId: Number(targetEmployeeId),
+        ownerId: Number(targetEmployeeId),
+        releaseTestCaseIds: selectedTestCaseIds,
       });
 
       showToast("success", successText);
@@ -738,12 +946,17 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
                 disabled={!selectedReleaseId || testCaseLoading}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
               >
-                <option value="">{selectedReleaseId ? "All modules" : "Select a release first"}</option>
-                {availableModules.map((module) => (
-                  <option key={module.id} value={String(module.id)}>
-                    {module.name}
-                  </option>
-                ))}
+                <option value="">
+                  {selectedReleaseId ? `All modules (${candidateTestCases.length})` : "Select a release first"}
+                </option>
+                {availableModules.map((module) => {
+                  const modCount = candidateTestCases.filter((tc) => String(tc.moduleId) === String(module.id)).length;
+                  return (
+                    <option key={module.id} value={String(module.id)}>
+                      {module.name} ({modCount})
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -756,12 +969,21 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
                 disabled={!selectedReleaseId || !selectedModuleId}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
               >
-                <option value="">{selectedModuleId ? "All submodules" : "Select a module first"}</option>
-                {availableSubmodules.map((submodule) => (
-                  <option key={submodule.id} value={String(submodule.id)}>
-                    {submodule.name}
-                  </option>
-                ))}
+                <option value="">
+                  {selectedModuleId
+                    ? `All submodules (${candidateTestCases.filter((tc) => String(tc.moduleId) === selectedModuleId).length})`
+                    : "Select a module first"}
+                </option>
+                {availableSubmodules.map((submodule) => {
+                  const smCount = candidateTestCases.filter(
+                    (tc) => String(tc.moduleId) === selectedModuleId && String(tc.submoduleId) === String(submodule.id)
+                  ).length;
+                  return (
+                    <option key={submodule.id} value={String(submodule.id)}>
+                      {submodule.name} ({smCount})
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -918,12 +1140,21 @@ export const StandaloneQAAllocationTab: React.FC<StandaloneQAAllocationTabProps>
                       />
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
                           <span className="font-semibold text-gray-900">{testCase.testCaseNo}</span>
+                          {testCase.moduleName && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                              {testCase.moduleName}
+                            </span>
+                          )}
+                          {testCase.subModuleName && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                              {testCase.subModuleName}
+                            </span>
+                          )}
                           {testCase.assignedTo != null && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">
-                              {employeeNameById.get(testCase.assignedTo) ||
-                                `Employee ${testCase.assignedTo}`}
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-medium">
+                              Assigned to: {testCase.assignedToName || employeeNameById.get(testCase.assignedTo) || `Employee ${testCase.assignedTo}`}
                             </span>
                           )}
                         </div>

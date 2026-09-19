@@ -1,11 +1,4 @@
-import { mockDb } from "../../mock/mockData";
-
-export const createRoles = async (data: { name: string; type?: string }) => {
-  const created = mockDb.createRole(data.name);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Role created successfully',
-    data: { id: created.id, name: created.roleName },
-  };
-};
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const createRole = async (data: any) => { const r = await apiClient.post(ENDPOINTS.role,data); return r.data; };
+export const createRoles = createRole;

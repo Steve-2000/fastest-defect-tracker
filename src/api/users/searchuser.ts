@@ -1,25 +1,9 @@
-import { mockDb } from "../../mock/mockData";
-
-export interface SearchUserData {
-  id: number;
-  userId: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  userStatus: string;
-  userGender: string;
-  designationName: string;
-}
-
-export async function searchUsers(searchTerm: string) {
-  const users = mockDb.getUsers();
-  const term = searchTerm.toLowerCase();
-
-  return users.filter(u =>
-    u.firstName.toLowerCase().includes(term) ||
-    u.lastName.toLowerCase().includes(term) ||
-    u.email.toLowerCase().includes(term) ||
-    u.userId.toLowerCase().includes(term) ||
-    u.designationName?.toLowerCase().includes(term)
-  );
-}
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const searchUser = async (query="") => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.employee);
+    const list = r.data.data ?? r.data ?? [];
+    return list.filter(u => u.name?.toLowerCase().includes(query.toLowerCase()) || u.email?.toLowerCase().includes(query.toLowerCase()));
+  } catch { return []; }
+};

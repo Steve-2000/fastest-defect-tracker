@@ -1,18 +1,6 @@
-import { mockDb } from "../../mock/mockData";
-
-export interface ActiveRelease {
-  id: string;
-  name: string;
-  status: string;
-}
-
-export const getActiveReleasesByProject = async (
-  projectId: string | number
-): Promise<ActiveRelease[]> => {
-  const releases = mockDb.getReleases(Number(projectId));
-  return releases.map(r => ({
-    id: String(r.id),
-    name: r.name || r.releaseName || 'Release',
-    status: r.status || 'In Progress',
-  }));
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const getActiveReleasesByProject = async (projectId) => {
+  try { const r = await apiClient.get(ENDPOINTS.releaseActiveByProject(projectId)); return r.data.data ?? []; }
+  catch { return []; }
 };

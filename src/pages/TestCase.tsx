@@ -23,6 +23,7 @@ import { getAllProjects } from "../api/projectget";
 import {
   getTestCasesByProjectAndSubmodule,
   getTestCasesByProjectAndModule,
+  getTestCasesByProject,
   deleteTestCase,
 } from "../api/testCase/testCaseApi";
 import { getSeverities } from "../api/severity";
@@ -42,7 +43,6 @@ const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 import QuickAddTestCase from "./QuickAddTestCase";
 import { useApp } from "../context/AppContext";
-import { mockDb } from "../mock/mockData";
 import { importTestCases } from "../api/importTestCase";
 import { useAccessibleProjects } from "../api/useAccessibleProjects";
 import { usePermission } from "../context/PermissionContext";
@@ -70,7 +70,15 @@ export const TestCase: React.FC = () => {
   );
 
   const { can } = usePermission();
-  const { projects } = useAccessibleProjects();
+  const { projects, switchProject } = useAccessibleProjects();
+
+  // Sync from URL
+  useEffect(() => {
+    if (projectId && String(projectId) !== selectedProjectId) {
+      setSelectedProjectId(String(projectId));
+      setGlobalProjectId(String(projectId));
+    }
+  }, [projectId]);
 
   const [testCases, setTestCases] = useState<TestCaseType[]>([]);
   const [totalPagesFromServer, setTotalPagesFromServer] = useState(1);
@@ -97,26 +105,66 @@ export const TestCase: React.FC = () => {
       { id: string; name: string; submodules: { id: string; name: string }[] }[]
     >
   >({});
-  const fetchAllTestCasesForProject = async (_projId: string) => {
+  const fetchAllTestCasesForProject = async (projId: string) => {
     try {
-      const testCases = mockDb.getTestCases();
+      if (!projId) {
+        setAllModuleTestCases([]);
+        setTestCases([]);
+        return;
+      }
+      const allSubModuleIds = (modulesByProject[projId] || projectModules || []).flatMap(
+        (m: any) => (m.submodules || []).map((sm: any) => sm.id)
+      );
+      const data = await getTestCasesByProject(projId, allSubModuleIds);
+      const testCases = Array.isArray(data) ? data : [];
+      const moduleMap = Object.fromEntries(
+        (projectModules || []).map((m: any) => [m.id, m.name])
+      );
+      const submoduleMap = Object.fromEntries(
+        (projectModules || []).flatMap((m: any) =>
+          (m.submodules || []).map((sm: any) => [sm.id, sm.name])
+        )
+      );
+
       const merged = testCases.map((tc: any) => ({
         ...tc,
         id: tc.id,
-        no: tc.testcaseNo || tc.no,
+        no: tc.no || tc.testcaseNo || `TC-${tc.id}`,
         testCaseId: tc.id,
+        moduleId: tc.moduleId,
+        module: moduleMap[tc.moduleId] || tc.moduleName || tc.module || "",
+        subModuleId: tc.subModuleId,
+        subModule: submoduleMap[tc.subModuleId] || tc.subModuleName || tc.subModule || "",
         description: tc.description,
         expectedResult: tc.expectedResult,
-        severity: tc.severityName || tc.severity,
-        defectType: tc.defectTypeName || tc.type,
+        steps: tc.detailsSteps || tc.steps || tc.description,
+        severity: ((severities &&
+          severities.find((s) => s.id === tc.severityId)?.name) ||
+          tc.severityName ||
+          tc.severity ||
+          "") as TestCaseType["severity"],
+        defectType: ((defectTypes &&
+          defectTypes.find((dt) => dt.id === tc.defectTypeId)?.name) ||
+          tc.defectTypeName ||
+          tc.type ||
+          "") as TestCaseType["defectType"],
+        type: ((defectTypes &&
+          defectTypes.find((dt) => dt.id === tc.defectTypeId)?.name) ||
+          tc.defectTypeName ||
+          tc.type ||
+          "") as TestCaseType["type"],
       }));
 
       const sorted = sortTestCasesByNo(merged as any);
       setAllModuleTestCases(sorted);
       setTestCases(sorted);
+      setTotalElements(sorted.length);
+      setTotalPagesFromServer(Math.max(1, Math.ceil(sorted.length / rowsPerPage)));
       setIsServerPaginated(false);
     } catch (err) {
       console.error("Error fetching project-level test cases:", err);
+      setAllModuleTestCases([]);
+      setTestCases([]);
     }
   };
 
@@ -136,22 +184,35 @@ export const TestCase: React.FC = () => {
   
   useEffect(() => {
     if (!selectedProjectId) return;
-    getModulesByProjectId(selectedProjectId).then((res) => {
-      console.log("Fetched modules for project", selectedProjectId, res.data);
-
-      const modules = (res.data || []).map((mod: any) => ({
-        id: String(mod.id),
-        name: mod.moduleName || mod.name,
-        submodules: (mod.submodules || []).map((sm: any) => ({
-          id: String(sm.id),
-          name: sm.getSubModuleName || sm.name,
-        })),
-      }));
-      setModulesByProject((prev) => ({
-        ...prev,
-        [selectedProjectId]: modules,
-      }));
-    });
+    let cancelled = false;
+    (async () => {
+      try {
+        const res: any = await getModulesByProjectId(Number(selectedProjectId));
+        const list = Array.isArray(res) ? res : res?.data ?? [];
+        const modules = await Promise.all(
+          list.map(async (mod: any) => {
+            let subs: any[] = [];
+            try {
+              const s: any = await getSubmodulesByModule(Number(mod.id));
+              subs = Array.isArray(s) ? s : s?.data ?? [];
+            } catch { /* module has no submodules */ }
+            return {
+              id: String(mod.id),
+              name: mod.moduleName || mod.name,
+              submodules: subs.map((sm: any) => ({
+                id: String(sm.id),
+                name: sm.getSubModuleName || sm.subModuleName || sm.name,
+              })),
+            };
+          }),
+        );
+        if (!cancelled)
+          setModulesByProject((prev) => ({ ...prev, [selectedProjectId]: modules }));
+      } catch (e) {
+        console.error("Error fetching modules:", e);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [selectedProjectId]);
   console.log("modulesByProject", modulesByProject);
 
@@ -161,6 +222,19 @@ export const TestCase: React.FC = () => {
       ? modulesByProject[selectedProjectId] || []
       : [];
   }, [modulesByProject, selectedProjectId]);
+
+  const submodules = useMemo(() => {
+    if (!selectedModuleId) return [];
+    const mod = projectModules.find(
+      (m) => String(m.id) === String(selectedModuleId),
+    );
+    return mod?.submodules ?? [];
+  }, [projectModules, selectedModuleId]);
+
+  const submoduleError =
+    selectedModuleId && projectModules.length > 0 && submodules.length === 0
+      ? "No submodules found for this module."
+      : "";
 
   
   
@@ -244,33 +318,7 @@ export const TestCase: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   
-  const [submodules, setSubmodules] = useState<Submodule[]>([]);
-  const [submoduleError, setSubmoduleError] = useState<string>("");
-  console.log({ submodules });
 
-  // Fetch submodules when selectedModuleId changes
-  useEffect(() => {
-    if (!selectedModuleId) {
-      setSubmodules([]);
-      setSubmoduleError("");
-      return;
-    }
-    getSubmodulesByModule(Number(selectedModuleId))
-      .then((res) => {
-        setSubmodules(res.data || []);
-        setSubmoduleError("");
-      })
-      .catch((err) => {
-        if (err?.response?.status === 404) {
-          setSubmodules([]);
-          setSubmoduleError("No submodules found for this module.");
-        } else {
-          setSubmodules([]);
-          setSubmoduleError("Failed to fetch submodules. Please try again.");
-        }
-      });
-  }, [selectedModuleId]);
-  console.log("submodule", submodules);
   
   const [severities, setSeverities] = useState<
     { id: number; name: string; color: string }[]
@@ -313,10 +361,8 @@ export const TestCase: React.FC = () => {
     if (selectedProjectId) {
       if (selectedModuleId) {
         refreshTestCases();
-      } else if (modulesByProject[selectedProjectId]?.length > 0) {
+      } else if (modulesByProject[selectedProjectId] !== undefined) {
         fetchAllTestCasesForProject(selectedProjectId);
-      } else {
-        setTestCases([]);
       }
     } else {
       setTestCases([]);
@@ -328,6 +374,7 @@ export const TestCase: React.FC = () => {
     currentPage,
     rowsPerPage,
     modulesByProject,
+    submodules,
   ]);
 
   // Add after state declarations
@@ -435,13 +482,7 @@ export const TestCase: React.FC = () => {
   }, [selectedProjectId, selectedModuleId, selectedSubmoduleId, fetchAllSubmoduleTestCases]);
 
   
-  if (!selectedProjectId) {
-    return (
-      <div className="p-8 text-center text-gray-500">
-        Please select a project to view its test cases.
-      </div>
-    );
-  }
+
 
   
   const selectedTestCaseIds = useMemo(() => {
@@ -1012,6 +1053,7 @@ export const TestCase: React.FC = () => {
     }
 
     const payload: CreateTestCaseRequest = {
+      name: formData.description?.trim().slice(0, 100) || "Test Case",
       description: formData.description,
       detailsSteps: formData.steps,
       severityId,
@@ -1400,9 +1442,11 @@ export const TestCase: React.FC = () => {
           rowsPerPage
         );
       } else {
+        const modSubIds = (submodules || []).map((sm: any) => sm.id);
         responseArr = await getTestCasesByProjectAndModule(
           selectedProjectId,
           selectedModuleId,
+          modSubIds,
           currentPage - 1,
           rowsPerPage
         );
@@ -1474,15 +1518,15 @@ export const TestCase: React.FC = () => {
 
     setIsExporting(true);
     try {
-      const testCasesList = mockDb.getTestCases();
+      const testCasesList = allModuleTestCases.length > 0 ? allModuleTestCases : testCases;
       const headers = ["Test Case No", "Description", "Severity", "Defect Type", "Module", "Submodule"];
       const rows = testCasesList.map(t => [
-        t.testcaseNo,
+        t.no || t.testcaseNo || `TC-${t.id}`,
         `"${(t.description || '').replace(/"/g, '""')}"`,
-        t.severityName || 'Medium',
-        t.defectTypeName || 'Functional Bug',
-        t.moduleName || 'Module',
-        t.subModuleName || 'Submodule',
+        t.severity || 'Medium',
+        t.type || 'Functional Bug',
+        t.module || 'Module',
+        t.subModule || 'Submodule',
       ]);
 
       const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
@@ -1513,15 +1557,13 @@ export const TestCase: React.FC = () => {
         </div>
         {}
         <ProjectSelector
-          projects={projects}
+          projects={projects.map((p) => ({ ...p, name: p.name || p.projectName }))}
           selectedProjectId={selectedProjectId || ""}
           onSelect={(id) => {
+            switchProject(Number(id));
             setSelectedProjectId(id);
-            setGlobalProjectId(id); // keep global context in sync
+            setGlobalProjectId(id);
             navigate(`/projects/${id}/test-cases`);
-            if (modulesByProject[id]?.length > 0) {
-              fetchAllTestCasesForProject(id);
-            }
           }}
         />
 
@@ -1832,16 +1874,22 @@ export const TestCase: React.FC = () => {
                       params.append("size", "100000");
 
                       
-                      let raw = mockDb.getTestCases(selectedSubmoduleId ? Number(selectedSubmoduleId) : undefined);
+                      let source = allModuleTestCases.length > 0 ? allModuleTestCases : testCases;
+                      if (selectedSubmoduleId) {
+                        source = source.filter(tc => String(tc.subModuleId) === String(selectedSubmoduleId));
+                      } else if (selectedModuleId) {
+                        source = source.filter(tc => String(tc.moduleId) === String(selectedModuleId));
+                      }
+                      let raw = [...source];
                       if (searchFilters.description) {
                         const term = searchFilters.description.toLowerCase();
                         raw = raw.filter(tc => (tc.description || '').toLowerCase().includes(term));
                       }
                       if (searchFilters.typeId) {
-                        raw = raw.filter(tc => tc.defectTypeId === Number(searchFilters.typeId));
+                        raw = raw.filter(tc => String(tc.defectTypeId) === String(searchFilters.typeId));
                       }
                       if (searchFilters.severityId) {
-                        raw = raw.filter(tc => tc.severityId === Number(searchFilters.severityId));
+                        raw = raw.filter(tc => String(tc.severityId) === String(searchFilters.severityId));
                       }
 
                       const normalized = raw.map((tc: any) => {
@@ -1857,16 +1905,16 @@ export const TestCase: React.FC = () => {
                           no: tc.no,
                           testCaseId: tc.id,
                           description: tc.description,
-                          detailsSteps: tc.detailsSteps,
-                          steps: tc.detailsSteps,
+                          detailsSteps: tc.detailsSteps || tc.steps,
+                          steps: tc.detailsSteps || tc.steps,
                           expectedResult: tc.expectedResult,
                           subModuleId: tc.subModuleId,
-                          subModuleName: tc.subModuleName,
-                          subModule: tc.subModuleName,
+                          subModuleName: tc.subModuleName || tc.subModule,
+                          subModule: tc.subModuleName || tc.subModule,
                           severityId: tc.severityId,
-                          severity: severityObj?.name || tc.severityName || "",
+                          severity: severityObj?.name || tc.severityName || tc.severity || "",
                           defectTypeId: tc.defectTypeId,
-                          type: defectTypeObj?.name || tc.defectTypeName || "",
+                          type: defectTypeObj?.name || tc.defectTypeName || tc.type || "",
                           moduleId: tc.moduleId,
                           module: tc.moduleName || tc.module,
                         };

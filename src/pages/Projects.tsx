@@ -454,6 +454,8 @@ const handleAllocateManager = async () => {
 
     const apiData = {
       name: formData.name.trim(),
+      prefix: formData.prefix.trim(),
+      projectType: formData.projectType,
       description: formData.description || "",
       startDate: formData.startDate,
       endDate: formData.endDate,

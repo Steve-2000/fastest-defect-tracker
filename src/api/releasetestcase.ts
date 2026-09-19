@@ -1,164 +1,143 @@
-import { mockDb } from "../mock/mockData";
+import apiClient from "../lib/api";
+import { ENDPOINTS } from "../utils/apiendpoint";
 
-interface TestCase {
-  id: string;
-  module: string;
-  subModule: string;
-  description: string;
-  steps: string;
-  type: string;
-  severity: string;
-  projectId: string;
-  releaseId?: string;
-  testCaseId?: string;
-}
+const unwrap = (r: any) => r?.data?.data ?? r?.data;
 
-export interface GetTestCasesByFilterResponse {
-  status: string;
-  message: string;
-  data: TestCase[];
-  statusCode: number;
-}
+const postAllocation = (releaseId: number, testCaseId: number | string) =>
+    apiClient.post(ENDPOINTS.releaseTestCase(releaseId), {
+        testCaseId: Number(testCaseId),
+    });
 
-export const getTestCasesByFilter = async (
-  projectId: string | number,
-  moduleId: string | number,
-  submoduleId: string | number,
-  releaseId: string | number
-): Promise<GetTestCasesByFilterResponse> => {
-  const testCases = mockDb.getTestCases();
-  return {
-    status: 'success',
-    message: 'Fetched successfully',
-    statusCode: 200,
-    data: testCases.map(t => ({
-      id: String(t.id),
-      testCaseId: t.testcaseNo,
-      module: t.moduleName || 'Module',
-      subModule: t.subModuleName || 'Submodule',
-      description: t.description,
-      steps: t.detailsSteps || t.steps || '',
-      type: t.defectTypeName || 'Functional Bug',
-      severity: t.severityName || 'Medium',
-      projectId: String(projectId),
-      releaseId: String(releaseId),
-    })),
-  };
+export const getReleaseTestCases = async (releaseId: number) => {
+    try {
+        const r = await apiClient.get(ENDPOINTS.releaseTestCase(releaseId));
+        return r.data?.data ?? r.data ?? [];
+    } catch (error) {
+        console.error(`Failed to fetch release test cases for release ${releaseId}:`, error);
+        throw error;
+    }
 };
 
+export const createReleaseTestCase = async (releaseId: number, data: any) => {
+    const r = await apiClient.post(ENDPOINTS.releaseTestCase(releaseId), data);
+    return r.data;
+};
+
+export const updateReleaseTestCase = async (releaseId: number, id: number, data: any) => {
+    const r = await apiClient.put(ENDPOINTS.releaseTestCaseById(releaseId, id), data);
+    return r.data;
+};
+
+export const deleteReleaseTestCase = async (releaseId: number, id: number) => {
+    const r = await apiClient.delete(ENDPOINTS.releaseTestCaseById(releaseId, id));
+    return r.data;
+};
+
+export const updateReleaseTestCaseStatus = async (releaseId: number, id: number, data: any) => {
+    const r = await apiClient.patch(ENDPOINTS.releaseTestCaseStatus(releaseId, id), data);
+    return r.data;
+};
+
+// Always returns an array, because handleAllocate checks Array.isArray(...)
 export const allocateTestCaseToRelease = async (
-  _releaseId: number,
-  _testCaseId: number
-): Promise<any> => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Test case allocated to release successfully',
-  };
+    releaseId: number,
+    testCaseId: number | string,
+) => {
+    const created = unwrap(await postAllocation(releaseId, testCaseId));
+    return Array.isArray(created) ? created : [created ?? { testCaseId }];
 };
 
+// One test case -> many releases. Returns { results, failed }
 export const allocateTestCaseToMultipleReleases = async (
-  _testCaseId: string | number,
-  releaseIds: (string | number)[]
-): Promise<{ results: any[]; failed: { releaseId: number; error: string }[]; message: string }> => {
-  return {
-    results: releaseIds.map(r => ({ releaseId: Number(r), status: 'success' })),
-    failed: [],
-    message: `Test case allocated to ${releaseIds.length} release(s) successfully.`,
-  };
+    testCaseId: number | string,
+    releaseIds: (number | string)[],
+) => {
+    const settled = await Promise.allSettled(
+        releaseIds.map((id) => allocateTestCaseToRelease(Number(id), testCaseId)),
+    );
+    const results: any[] = [];
+    const failed: { releaseId: number; error: string }[] = [];
+    settled.forEach((s, i) => {
+        if (s.status === "fulfilled") results.push(...s.value);
+        else
+            failed.push({
+                releaseId: Number(releaseIds[i]),
+                error: s.reason?.response?.data?.message || s.reason?.message || "Unknown error",
+            });
+    });
+    return { results, failed };
 };
 
-export const allocateTestCasesToManyReleases = async (
-  releaseIds: (string | number)[],
-  releaseNames: string[],
-  _testCaseIds: (string | number)[]
-): Promise<any> => {
-  return releaseIds.map((r, idx) => ({
-    releaseId: r,
-    releaseName: releaseNames[idx] || `Release ${r}`,
-    status: 'fulfilled',
-    data: { success: true },
-    error: null,
-  }));
-};
-
+// Many test cases -> one release. Returns the array of allocated items
 export const bulkAllocateTestCasesToReleases = async (
-  _testCaseIds: (string | number)[],
-  _releaseId: string | number
-): Promise<any> => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Bulk allocation succeeded',
-  };
+    testCaseIds: (number | string)[],
+    releaseId: number | string,
+) => {
+    const settled = await Promise.allSettled(
+        testCaseIds.map((id) => allocateTestCaseToRelease(Number(releaseId), id)),
+    );
+    const ok = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+    if (ok.length === 0) {
+        const rej = settled.find((s) => s.status === "rejected") as PromiseRejectedResult | undefined;
+        if (rej) throw rej.reason;
+    }
+    return ok;
 };
 
-export const getReleaseTestCasesByFiltersGroup = async (params: {
-  releaseId: number;
-  moduleId: number;
-  subModuleId: number;
-}): Promise<any> => {
-  const testCases = mockDb.getTestCases(params.subModuleId);
-  return {
-    status: 'success',
-    data: testCases.map(tc => ({
-      id: tc.id,
-      testCaseId: tc.testcaseNo,
-      description: tc.description,
-      steps: tc.detailsSteps || tc.steps,
-      type: tc.defectTypeName || tc.type,
-      severity: tc.severityName || tc.severity,
-      moduleId: tc.moduleId || params.moduleId,
-      subModuleId: tc.subModuleId || params.subModuleId,
-    })),
-  };
+// Many -> many. Returns [{ status, releaseId, releaseName, data | error }]
+export const allocateTestCasesToManyReleases = async (
+    releaseIds: (number | string)[],
+    releaseNames: string[],
+    testCaseIds: (number | string)[],
+) =>
+    Promise.all(
+        releaseIds.map(async (rid, i) => {
+            try {
+                const data = await bulkAllocateTestCasesToReleases(testCaseIds, rid);
+                return { status: "fulfilled", releaseId: rid, releaseName: releaseNames[i], data };
+            } catch (error) {
+                return { status: "rejected", releaseId: rid, releaseName: releaseNames[i], error };
+            }
+        }),
+    );
+
+export const getReleaseTestCasesByFiltersGroup = async (releaseId: number, filters: any = {}) => {
+    try {
+        const r = await apiClient.get(ENDPOINTS.releaseTestCase(releaseId));
+        return r.data?.data ?? r.data ?? [];
+    } catch {
+        return [];
+    }
 };
 
-export const getQaAllocationSummary = async (_qaEngineerIds: string): Promise<any> => {
-  return {
-    status: 'success',
-    data: {
-      allocationSummary: {
-        totalAllocated: 12,
-        qaEngineerCount: 2,
-        remaining: 4,
-        qaEngineers: [
-          { id: 2, name: 'Priya Ramesh', testCases: 7 },
-          { id: 5, name: 'Dinesh Venkatesh', testCases: 5 },
-        ],
-      },
-    },
-    statusCode: 200,
-  };
+export const getQaAllocationSummary = async (releaseId: number) => {
+    try {
+        const r = await apiClient.get(ENDPOINTS.releaseTestCaseQaAllocation(releaseId));
+        return r.data?.data ?? r.data ?? [];
+    } catch {
+        return [];
+    }
 };
 
-export const getQaEngineerTestCases = async (_params: any): Promise<any> => {
-  const testCases = mockDb.getTestCases();
-  return {
-    status: 'success',
-    data: testCases.map(t => ({
-      id: t.id,
-      testCaseId: t.testcaseNo,
-      description: t.description,
-      steps: t.detailsSteps,
-      type: t.defectTypeName,
-      severity: t.severityName,
-    })),
-    statusCode: 200,
-  };
+export const getQaEngineerTestCases = async (releaseId: number, employeeId: number) => {
+    try {
+        const r = await apiClient.get(ENDPOINTS.releaseTestCaseEmployeePatch(releaseId, employeeId));
+        return r.data?.data ?? r.data ?? [];
+    } catch {
+        return [];
+    }
 };
 
-export const getDefectTestCaseCounts = async (_releaseId: string | number): Promise<any> => {
-  const defects = mockDb.getDefects();
-  return {
-    status: 'success',
-    data: defects.map(d => ({
-      testId: d.testCaseId || 1,
-      testCaseId: `TC-${d.testCaseId || 1}`,
-      defectId: d.defectId,
-      assignedTo: d.assignedToName || 'Developer',
-      priority: d.priorityName || 'High',
-    })),
-    statusCode: 200,
-  };
+export const getDefectTestCaseCounts = async (releaseId: number) => {
+    try {
+        const r = await apiClient.get(ENDPOINTS.releaseTestCase(releaseId));
+        const list = r.data?.data ?? r.data ?? [];
+        return { total: list.length };
+    } catch {
+        return { total: 0 };
+    }
+};
+
+export const getTestCasesByFilter = async (releaseId: number, filters: any = {}) => {
+    return getReleaseTestCasesByFiltersGroup(releaseId, filters);
 };

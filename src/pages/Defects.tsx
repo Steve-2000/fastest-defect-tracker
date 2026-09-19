@@ -540,12 +540,18 @@ export const Defects: React.FC = () => {
   React.useEffect(() => {
     if (!selectedProjectId) return;
     getModulesByProjectId(selectedProjectId)
-      .then((res) => {
-        const moduleData = res.data?.data || res.data || [];
+      .then((res: any) => {
+        const list = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.data)
+          ? res.data.data
+          : [];
         setModules(
-          (Array.isArray(moduleData) ? moduleData : []).map((m: any) => ({
+          list.map((m: any) => ({
             id: m.id?.toString(),
-            name: m.name,
+            name: m.name || m.moduleName || `Module ${m.id}`,
           })),
         );
       })
@@ -1406,11 +1412,18 @@ const filteredDefects = backendDefects.filter((d) => {
 
     if (moduleId) {
       try {
-        const res = await getSubmodulesByModuleId(Number(moduleId));
+        const res: any = await getSubmodulesByModuleId(Number(moduleId));
+        const list = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.data)
+          ? res.data.data
+          : [];
 
-        const mapped = (res.data || []).map((sm: any) => ({
+        const mapped = list.map((sm: any) => ({
           id: sm.id?.toString() || sm.subModuleId?.toString(),
-          name: sm.name || sm.subModuleName,
+          name: sm.name || sm.subModuleName || `Submodule ${sm.id}`,
         }));
 
         setSubmodules(mapped);
@@ -1777,23 +1790,33 @@ const filteredDefects = backendDefects.filter((d) => {
     }
   };
 
-  // Fetch modules when project changes
+  // Ensure modules are fetched when modal opens or project changes
   React.useEffect(() => {
     if (!selectedProjectId) return;
-    getModulesByProjectId(selectedProjectId)
-      .then((res) => {
-        setModules(
-          (res.data || []).map((m: any) => ({
-            id: m.id?.toString(),
-            name: m.name,
-          })),
-        );
-      })
-      .catch((error) => {
-        console.error("Failed to fetch modules:", error.message);
-        setModules([]);
-      });
-  }, [selectedProjectId]);
+    if (modules.length === 0 || isModalOpen) {
+      getModulesByProjectId(selectedProjectId)
+        .then((res: any) => {
+          const list = Array.isArray(res)
+            ? res
+            : Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.data?.data)
+            ? res.data.data
+            : [];
+          if (list.length > 0) {
+            setModules(
+              list.map((m: any) => ({
+                id: m.id?.toString(),
+                name: m.name || m.moduleName || `Module ${m.id}`,
+              })),
+            );
+          }
+        })
+        .catch((error) => {
+          console.error("Failed to fetch modules:", error.message);
+        });
+    }
+  }, [selectedProjectId, isModalOpen]);
 
   // Fetch submodules when module changes in the form
   React.useEffect(() => {
@@ -1803,10 +1826,17 @@ const filteredDefects = backendDefects.filter((d) => {
       return;
     }
     getSubmodulesByModuleId(Number(formData.moduleId))
-      .then((res) => {
-        const mapped = (res.data || []).map((sm: any) => ({
+      .then((res: any) => {
+        const list = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.data)
+          ? res.data.data
+          : [];
+        const mapped = list.map((sm: any) => ({
           id: sm.id?.toString() || sm.subModuleId?.toString(),
-          name: sm.name || sm.subModuleName,
+          name: sm.name || sm.subModuleName || `Submodule ${sm.id}`,
         }));
         setSubmodules(mapped);
       })
@@ -1844,15 +1874,24 @@ const filteredDefects = backendDefects.filter((d) => {
     Promise.all(
       selectedModules.map((module) =>
         getSubmodulesByModuleId(Number(module.id))
-          .then((res) => ({
-            moduleId: module.id,
-            name: module.name,
-            submodules: (res.data || []).map((sm: any) => ({
-              id: sm.id?.toString() || sm.subModuleId?.toString(),
-              name: sm.name || sm.subModuleName,
+          .then((res: any) => {
+            const list = Array.isArray(res)
+              ? res
+              : Array.isArray(res?.data)
+              ? res.data
+              : Array.isArray(res?.data?.data)
+              ? res.data.data
+              : [];
+            return {
               moduleId: module.id,
-            })),
-          }))
+              name: module.name,
+              submodules: list.map((sm: any) => ({
+                id: sm.id?.toString() || sm.subModuleId?.toString(),
+                name: sm.name || sm.subModuleName || `Submodule ${sm.id}`,
+                moduleId: module.id,
+              })),
+            };
+          })
           .catch((error) => {
             console.error(
               `Failed to fetch submodules for module ${module.name}:`,
@@ -2971,54 +3010,85 @@ React.useEffect(() => {
         currentPage * defectsPerPage,
       );
 
-// Fetch allocated users for the selected SUBMODULE only
+// Fetch allocated developers for the project / selected submodule
   useEffect(() => {
-    if (!formData.subModuleId || !selectedProjectId) {
+    if (!selectedProjectId) {
       setAllocatedUsers([]);
       return;
     }
     setIsAllocatedUsersLoading(true);
-    Promise.all([
-      getAllSubmoduleAllocatedDevBySubmoduleId(
-        Number(formData.subModuleId),
-      ).catch((error) => {
-        if (error?.response?.status === 404) return { data: [] } as any; // no devs allocated yet
-        throw error;
-      }),
-      getDevelopersWithRolesByProjectId(selectedProjectId || undefined),
-    ])
-      .then(([subModuleDevRes, projectDevsRaw]) => {
-        const assignedEmployeeIds = new Set(
-          (subModuleDevRes?.data || []).map((d: any) => Number(d.employeeId)),
-        );
-        const users = Array.isArray(projectDevsRaw)
+
+    const fetchDevs = async () => {
+      try {
+        const [subModuleDevRes, projectDevsRaw] = await Promise.all([
+          formData.subModuleId
+            ? getAllSubmoduleAllocatedDevBySubmoduleId(Number(formData.subModuleId)).catch(() => [])
+            : Promise.resolve([]),
+          getDevelopersWithRolesByProjectId(Number(selectedProjectId)).catch(() => []),
+        ]);
+
+        const rawProjectUsers = Array.isArray(projectDevsRaw)
           ? projectDevsRaw
-          : projectDevsRaw?.data || projectDevsRaw?.users || [];
-        const mappedUsers = users
-          .map((user: any) => ({
-            userId: user.employeeId || user.userId || user.id,
-            userName:
-              user.firstName && user.lastName
-                ? `${user.firstName} ${user.lastName}`.trim()
-                : user.userName || user.name || "Unknown User",
-            empId: user.employeeId || user.userId || user.id,
-          }))
-          .filter(
-            (u: any) =>
-              u.userId &&
-              u.userName &&
-              assignedEmployeeIds.has(Number(u.userId)),
+          : (projectDevsRaw as any)?.data || (projectDevsRaw as any)?.users || [];
+
+        const allProjectDevs = rawProjectUsers.map((user: any) => ({
+          userId: Number(user.employeeId || user.userId || user.id),
+          userName:
+            user.userWithRole ||
+            user.employeeName ||
+            (user.firstName && user.lastName
+              ? `${user.firstName} ${user.lastName}`.trim()
+              : user.userName || user.name || `Developer ${user.employeeId || user.userId || user.id}`),
+          empId: Number(user.employeeId || user.userId || user.id),
+        })).filter((u: any) => u.userId && u.userName);
+
+        const subDevList = Array.isArray(subModuleDevRes)
+          ? subModuleDevRes
+          : (subModuleDevRes as any)?.data || [];
+
+        let finalUsers: { userId: number; userName: string; empId: number }[] = [];
+
+        if (subDevList.length > 0) {
+          const assignedEmployeeIds = new Set(
+            subDevList.map((d: any) => Number(d.employeeId || d.userId || d.id)).filter(Boolean)
           );
-        setAllocatedUsers(mappedUsers);
-      })
-      .catch((error) => {
-        console.error(
-          "Failed to fetch developers allocated to submodule:",
-          error,
-        );
+
+          let matched = allProjectDevs.filter((u: any) => assignedEmployeeIds.has(Number(u.userId)));
+
+          if (matched.length === 0) {
+            matched = subDevList.map((d: any) => ({
+              userId: Number(d.employeeId || d.userId || d.id),
+              userName: d.employeeName || d.userName || d.name || `Developer ${d.employeeId || d.userId || d.id}`,
+              empId: Number(d.employeeId || d.userId || d.id),
+            })).filter((u: any) => u.userId);
+          }
+
+          finalUsers = matched.length > 0 ? matched : allProjectDevs;
+        } else {
+          finalUsers = allProjectDevs;
+        }
+
+        setAllocatedUsers(finalUsers);
+
+        // Auto-select if only 1 developer or preserve valid selection
+        setFormData(prev => {
+          if (finalUsers.length === 1) {
+            return { ...prev, assigntoId: finalUsers[0].userId.toString() };
+          }
+          if (prev.assigntoId && finalUsers.some(u => u.userId.toString() === prev.assigntoId)) {
+            return prev;
+          }
+          return { ...prev, assigntoId: "" };
+        });
+      } catch (error) {
+        console.error("Failed to fetch developers:", error);
         setAllocatedUsers([]);
-      })
-      .finally(() => setIsAllocatedUsersLoading(false));
+      } finally {
+        setIsAllocatedUsersLoading(false);
+      }
+    };
+
+    fetchDevs();
   }, [formData.subModuleId, selectedProjectId]);
 
   useEffect(() => {
@@ -4493,14 +4563,14 @@ React.useEffect(() => {
                         handleInputChange("assigntoId", e.target.value)
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      disabled={isAllocatedUsersLoading || !formData.moduleId}
+                      disabled={isAllocatedUsersLoading || !selectedProjectId}
                       required
                     >
                       <option value="">
                         {isAllocatedUsersLoading
                           ? "Loading users..."
                           : allocatedUsers.length === 0
-                            ? "No users available for this module"
+                            ? "No developers available for this project"
                             : "Select assignee"}
                       </option>
                       {allocatedUsers.map((user) => (

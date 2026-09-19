@@ -1,16 +1,3 @@
-export async function getDefectSeverityIndex(projectId: string) {
-  return {
-    status: "success",
-    statusCode: 200,
-    data: {
-      projectId: Number(projectId),
-      defectSeverityIndex: 2.4,
-      status: "Medium",
-      totalDefects: 16,
-      criticalDefects: 2,
-      highDefects: 4,
-      mediumDefects: 7,
-      lowDefects: 3,
-    },
-  };
-}
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const getDefectSeverityIndex = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectSeverityBreakdown(projectId)); return r.data.data??{}; } catch { return {}; } };

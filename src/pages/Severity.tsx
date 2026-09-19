@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -113,7 +113,7 @@ const Severity: React.FC = () => {
       setColorError('');
       return;
     }
-      const isDuplicate = severities.some(s => s.color.toLowerCase() === formData.color.toLowerCase());
+      const isDuplicate = severities.some(s => (s.color || "").toLowerCase() === formData.color.toLowerCase());
       setColorError(isDuplicate ? 'This color is already in use. Please choose a different color.' : '');
     } else {
       setColorError('');
@@ -185,7 +185,7 @@ const Severity: React.FC = () => {
       const mapped = refreshed.data.content.map((item) => ({
         id: item.id,
         name: item.name,
-        color: item.color.startsWith('#') ? item.color : `#${item.color}`,
+        color: (item.color ? (item.color.startsWith('#') ? item.color : '#' + item.color) : '#000000'),
          weight: item.weight,
       }));
       setSeverities(mapped);
@@ -260,7 +260,7 @@ const Severity: React.FC = () => {
   // Duplicate color check
   const isDuplicateColor = severities.some(
     s =>
-      s.color.toLowerCase() ===
+      (s.color || "").toLowerCase() ===
         formData.color.toLowerCase() &&
       s.id !== editingSeverity.id
   );
@@ -303,9 +303,7 @@ const Severity: React.FC = () => {
       (item) => ({
         id: item.id,
         name: item.name,
-        color: item.color.startsWith('#')
-          ? item.color
-          : `#${item.color}`,
+        color: (item.color ? (item.color.startsWith('#') ? item.color : '#' + item.color) : '#000000'),
         weight: item.weight,
       })
     );
@@ -508,3 +506,5 @@ const Severity: React.FC = () => {
 };
 
 export default Severity;
+
+

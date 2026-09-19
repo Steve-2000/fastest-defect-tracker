@@ -1,13 +1,6 @@
-import { mockDb } from "../../mock/mockData";
-
-export const getReleasesByProjectId = async (projectId: string | number) => {
-  return mockDb.getReleases(Number(projectId));
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const searchRelease = async (query="") => {
+  try { const r = await apiClient.get(ENDPOINTS.release); const list = r.data.data ?? r.data ?? []; return list.filter(x => x.name?.toLowerCase().includes(query.toLowerCase())); }
+  catch { return []; }
 };
-
-export async function searchReleases(params: any) {
-  const releases = mockDb.getReleases();
-  if (typeof params === 'number' || typeof params === 'string') {
-    return mockDb.getReleaseById(params);
-  }
-  return releases;
-}

@@ -1,36 +1,4 @@
-import { mockDb } from '../../mock/mockData';
-
-export interface CreateCommentRequest {
-  userId: string | number;
-  defectId: string | number;
-  comment: string;
-  attachment?: string | null;
-}
-
-export interface CreateCommentResponse {
-  message: string;
-  data?: any;
-  status?: string;
-  statusCode?: number;
-}
-
-export const createComment = async (payload: CreateCommentRequest): Promise<CreateCommentResponse> => {
-  const user = mockDb.getUserById(Number(payload.userId));
-  const newComment = mockDb.addDefectComment(Number(payload.defectId), payload.comment, user);
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Comment added successfully',
-    data: newComment,
-  };
-};
-
-export const updateComment = async (commentId: number, comment: string) => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Comment updated successfully',
-    data: { id: commentId, comment },
-  };
-};
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const createComment = async (defectId: number | string, data: any) => { const r = await apiClient.post(ENDPOINTS.defectComment(Number(defectId)),data); return r.data; };
+export const updateComment = async (defectId: number | string, id: number, data: any) => { const r = await apiClient.put(ENDPOINTS.defectComment(Number(defectId)),data); return r.data; };

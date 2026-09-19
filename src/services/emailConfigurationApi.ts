@@ -1,94 +1,105 @@
-import { SmtpConfig } from "../types/emailConfiguration";
-import { mockDb, INITIAL_EMAIL_POINT_SETUPS, INITIAL_EMAIL_TEMPLATES } from "../mock/mockData";
+﻿import apiClient from "../lib/api";
+import { ENDPOINTS } from "../utils/apiendpoint";
 
+// SMTP Configs
 export interface CreateSmtpConfigRequest {
-  name: string;
-  smtpHost: string;
-  smtpPort: number;
+  host: string;
+  port: number;
   username: string;
   password: string;
-  fromEmail: string;
-  fromName: string;
-  isEnabled?: boolean;
+  fromEmail?: string;
+  fromName?: string;
+  encryption?: string;
 }
 
-export const createSmtpConfig = async (data: CreateSmtpConfigRequest): Promise<SmtpConfig> => {
-  const created = mockDb.createEmailConfig(data);
-  return created as any;
+export const getSmtpConfigs = async () => {
+  try { const r = await apiClient.get(ENDPOINTS.emailConfig); return r.data.data ?? []; }
+  catch { return []; }
 };
 
-export const getSmtpConfigs = async (): Promise<SmtpConfig[]> => {
-  return mockDb.getEmailConfigs() as any[];
+export const createSmtpConfig = async (data: CreateSmtpConfigRequest) => {
+  const r = await apiClient.post(ENDPOINTS.emailConfig, data);
+  return r.data;
 };
 
-export const updateSmtpConfig = async (id: number, data: CreateSmtpConfigRequest): Promise<SmtpConfig> => {
-  const updated = mockDb.updateEmailConfig(id, data);
-  return (updated || data) as any;
+export const updateSmtpConfig = async (id: number, data: Partial<CreateSmtpConfigRequest>) => {
+  const r = await apiClient.put(ENDPOINTS.emailConfigById(id), data);
+  return r.data;
 };
 
-export const deleteSmtpConfig = async (id: number): Promise<void> => {
-  mockDb.deleteEmailConfig(id);
+export const deleteSmtpConfig = async (id: number) => {
+  const r = await apiClient.delete(ENDPOINTS.emailConfigById(id));
+  return r.data;
 };
 
-export const updateSmtpConfigStatus = async (id: number, isEnabled: boolean) => {
-  const updated = mockDb.updateEmailConfig(id, { isEnabled });
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: updated,
-  };
+export const updateSmtpConfigStatus = async (id: number, enabled: boolean) => {
+  const r = await apiClient.patch(ENDPOINTS.emailConfigEnable(id), { enabled });
+  return r.data;
 };
 
+// Aliases
+export const getEmailConfigs = getSmtpConfigs;
+export const createEmailConfig = createSmtpConfig;
+export const updateEmailConfig = updateSmtpConfig;
+export const enableEmailConfig = updateSmtpConfigStatus;
+
+// Email Point Setups
 export const getAllEmailPointSetups = async () => {
-  return INITIAL_EMAIL_POINT_SETUPS;
+  try { const r = await apiClient.get(ENDPOINTS.emailPointSetup); return r.data.data ?? []; }
+  catch { return []; }
 };
 
-export const getRoleNotificationChannels = async (_roleId: number): Promise<Record<number, string>> => {
-  return {
-    1: 'email',
-    2: 'email',
-    3: 'in-app',
-    4: 'email',
-  };
+export const enableEmailPointSetup = async (id: number) => {
+  const r = await apiClient.patch(ENDPOINTS.emailPointSetupEnable(id), {});
+  return r.data;
 };
 
-export const updateRoleNotificationRules = async (_roleId: number, _pointChannels: Map<number, string>): Promise<void> => {
-  return Promise.resolve();
+export const updateUserExtraPoints = async (userId: number, data: any) => {
+  const r = await apiClient.post(ENDPOINTS.userExtraPoints(userId), data);
+  return r.data;
 };
 
-export const updateUserExtraPoints = async (_userId: number, _pointChannels: Map<number, string>): Promise<void> => {
-  return Promise.resolve();
+// Role Notifications
+export const getRoleNotificationChannels = async () => {
+  try { const r = await apiClient.get(ENDPOINTS.roleNotificationUpdate); return r.data.data ?? []; }
+  catch { return []; }
 };
 
-export const updateEmailPointSetupStatus = async (id: number, isEnabled: boolean) => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: { id, isEnabled },
-  };
+export const updateRoleNotificationRules = async (data: any) => {
+  const r = await apiClient.post(ENDPOINTS.roleNotificationUpdate, data);
+  return r.data;
 };
 
-export const getAllEmailTemplates = async () => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: INITIAL_EMAIL_TEMPLATES,
-  };
+// Email Recipients
+export const getEmailRecipientsRoleMatrix = async () => {
+  try { const r = await apiClient.get(ENDPOINTS.emailRecipientsRoleMatrix); return r.data.data ?? {}; }
+  catch { return {}; }
 };
 
-export const updateEmailTemplate = async (id: number, data: { subject: string; body: string }) => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: { id, ...data },
-  };
+// Email Templates
+export const getEmailTemplates = async () => {
+  try { const r = await apiClient.get(ENDPOINTS.emailTemplate); return r.data.data ?? []; }
+  catch { return []; }
+};
+
+export const updateEmailTemplate = async (id: number, data: any) => {
+  const r = await apiClient.put(ENDPOINTS.emailTemplateById(id), data);
+  return r.data;
 };
 
 export const resetEmailTemplate = async (id: number) => {
-  const template = INITIAL_EMAIL_TEMPLATES.find(t => t.id === id);
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: template,
-  };
+  const r = await apiClient.post(ENDPOINTS.emailTemplateReset(id), {});
+  return r.data;
 };
+
+// Email Sent / Log
+export const getEmailSent = async () => {
+  try { const r = await apiClient.get(ENDPOINTS.emailSent); return r.data.data ?? []; }
+  catch { return []; }
+};
+
+export const getAllEmailTemplates = async () => [];
+
+
+export const updateEmailPointSetupStatus = async (data: any) => ({});
+

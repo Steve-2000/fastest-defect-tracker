@@ -1,66 +1,33 @@
-import { mockDb } from "../../mock/mockData";
-
-export interface SimpleUser {
-  id: number;
-  userId: string;
-  firstName: string;
-  lastName: string;
-  designationId?: number;
-  designationName?: string;
-}
-
-interface GetUsersByDesignationResponse {
-  status: string;
-  data: SimpleUser[];
-}
-
-export async function getAllUsers(page: number = 0, size: number = 10) {
-  const users = mockDb.getUsers();
-  const start = page * size;
-  const paged = users.slice(start, start + size);
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+function mapEmp(u: any) {
+  const parts = (u.name ?? "").split(" ");
+  const isAdminUser =
+    u.role?.name === "Super Admin" ||
+    u.role?.code === "SUPER_ADMIN" ||
+    u.email === "admin@example.com" ||
+    u.designation?.name === "Admin" ||
+    u.designation?.isHidden ||
+    u.designationName === "Admin";
 
   return {
-    status: 'success',
-    statusCode: 200,
-    data: {
-      content: paged,
-      totalElements: users.length,
-      totalPages: Math.ceil(users.length / size),
-      size,
-      number: page,
-    },
+    id: u.id,
+    userId: String(u.id),
+    firstName: parts[0] ?? "",
+    lastName: parts.slice(1).join(" "),
+    email: u.email,
+    name: u.name,
+    designationId: isAdminUser ? undefined : (u.designation?.id || u.designationId),
+    designationName: isAdminUser ? "-" : (u.designation?.name || u.designationName || "-"),
+    status: u.status,
+    isActive: u.status === "ACTIVE",
+    role: u.role,
+    gender: u.gender || "-",
+    contactNo: u.contactNo || "-",
+    joinDate: u.joinDate || "-",
   };
 }
-
-export async function getAllUsersSimple() {
-  const users = mockDb.getUsers();
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: users.map(u => ({
-      id: u.id,
-      userId: u.userId,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      designationId: u.designationId,
-      designationName: u.designationName,
-    })),
-  };
-}
-
-export async function getUsersByDesignationId(designationId: number): Promise<GetUsersByDesignationResponse> {
-  const users = mockDb.getUsers().filter(u => u.designationId === Number(designationId));
-  return {
-    status: 'success',
-    data: users.map(u => ({
-      id: u.id,
-      userId: u.userId,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      designationId: u.designationId,
-      designationName: u.designationName,
-    })),
-  };
-}
-
+export async function getAllUsers(page=0, size=100) { const r=await apiClient.get(ENDPOINTS.employee); const all=(r.data.data??r.data??[]).map(mapEmp); const s=page*size; return {status:"success",statusCode:200,data:{content:all.slice(s,s+size),totalElements:all.length,totalPages:Math.ceil(all.length/size),size,number:page}}; }
+export async function getAllUsersSimple() { const r=await apiClient.get(ENDPOINTS.employee); return {status:"success",statusCode:200,data:(r.data.data??r.data??[]).map(mapEmp)}; }
+export async function getUsersByDesignationId(desId) { const r=await apiClient.get(ENDPOINTS.designationEmployees(desId)); return {status:"success",data:(r.data.data??r.data??[]).map(mapEmp)}; }
 export default getAllUsers;

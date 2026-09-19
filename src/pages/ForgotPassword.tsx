@@ -19,7 +19,7 @@ const ForgotPassword: React.FC = () => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
+
     if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
       setError('Please enter a valid email address.');
       setLoading(false);
@@ -29,7 +29,7 @@ const ForgotPassword: React.FC = () => {
     try {
       const response = await forgotPassword(email);
       console.log("Forgot password response:", response);
-      
+
       if (response.status === 'Success') {
         setStep('Success');
         setMessage(response.data?.message)
@@ -78,7 +78,7 @@ const ForgotPassword: React.FC = () => {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Processing...' : 'Send Reset Link'}
             </Button>
-            
+
             <div className="text-center mt-4">
               <Link to="/login" className="text-blue-600 text-sm hover:underline">Back to Login</Link>
             </div>

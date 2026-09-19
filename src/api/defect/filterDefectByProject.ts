@@ -1,101 +1,22 @@
-import { FilteredDefect } from "../../types";
-import { mockDb } from "../../mock/mockData";
+﻿export interface FilteredDefect { id: number; title?: string; status?: string; priority?: string; severity?: string; projectId?: number; releaseId?: number; }
 
-export async function getDefectsByProjectId(
-  projectId: number,
-  page: number = 0,
-  size: number = 10,
-  search?: string
-): Promise<any> {
-  let defects = mockDb.getDefects(projectId);
-  if (search) {
-    const term = search.toLowerCase();
-    defects = defects.filter(d =>
-      d.title.toLowerCase().includes(term) ||
-      d.description.toLowerCase().includes(term) ||
-      d.defectId.toLowerCase().includes(term)
-    );
-  }
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
 
-  const start = page * size;
-  const paged = defects.slice(start, start + size);
+export const filterDefectByProject = async (projectId: number) => {
+  try { const r = await apiClient.get(ENDPOINTS.defectByProject(projectId)); return r.data.data??r.data??[]; }
+  catch { return []; }
+};
+export const getDefectsByProjectId = filterDefectByProject;
+export const getDefectsByProject = filterDefectByProject;
+export const filterDefects = async (params: any) => {
+  try {
+    const pid = params.projectId ?? params.project_id ?? 0;
+    const r = await apiClient.get(ENDPOINTS.defectByProject(pid));
+    return r.data.data??r.data??[];
+  } catch { return []; }
+};
+export default filterDefectByProject;
 
-  const mapped = paged.map(d => ({
-    id: d.id,
-    defectId: d.defectId,
-    description: d.description || d.title,
-    reOpenCount: d.reOpenCount || 0,
-    attachment: d.attachment || null,
-    steps: d.steps || '',
-    projectName: d.projectName,
-    severityName: d.severityName || 'Medium',
-    priorityName: d.priorityName || 'Medium',
-    statusName: d.statusName || d.status,
-    defect_status_name: d.statusName || d.status,
-    defect_status_id: d.statusId || 1,
-    releaseName: d.releaseName,
-    assignedToName: d.assignedToName || d.assignedTo,
-    assignedByName: d.assignedByName || d.reportedBy,
-    assigned_to_name: d.assignedToName || d.assignedTo,
-    assigned_by_name: d.assignedByName || d.reportedBy,
-    assigned_to_id: d.assignedToId || 3,
-    assigned_by_id: d.assignedById || 1,
-    defectTypeName: d.defectTypeId ? 'Functional Bug' : 'Functional Bug',
-    defect_type_name: 'Functional Bug',
-    moduleName: d.moduleName,
-    module_name: d.moduleName,
-    subModuleName: d.subModuleName,
-    sub_module_name: d.subModuleName,
-    testCaseId: d.testCaseId,
-  }));
 
-  return {
-    status: 'success',
-    statusCode: 200,
-    data: {
-      content: mapped,
-      totalElements: defects.length,
-      totalPages: Math.ceil(defects.length / size),
-      size,
-      number: page,
-    },
-    content: mapped,
-  };
-}
-
-export async function filterDefects(
-  filters: any,
-  page: number = 0,
-  size: number = 10
-): Promise<any> {
-  const projectId = Number(filters.projectId || 1);
-  return getDefectsByProjectId(projectId, page, size, filters.search);
-}
-
-export async function filterDefectsForTest(filters: {
-  projectId: string | number;
-  releaseId?: number;
-}): Promise<FilteredDefect[]> {
-  const projectId = Number(filters.projectId);
-  const defects = mockDb.getDefects(projectId);
-  return defects.map(d => ({
-    id: d.id,
-    defectId: d.defectId,
-    description: d.description || d.title,
-    reOpenCount: d.reOpenCount || 0,
-    attachment: d.attachment || null,
-    steps: d.steps || '',
-    projectName: d.projectName,
-    severityName: d.severityName || 'Medium',
-    priorityName: d.priorityName || 'Medium',
-    statusName: d.statusName || d.status,
-    defect_status_name: d.statusName || d.status,
-    releaseName: d.releaseName,
-    assignedToName: d.assignedToName || d.assignedTo,
-    assignedByName: d.assignedByName || d.reportedBy,
-    defectTypeName: 'Functional Bug',
-    moduleName: d.moduleName,
-    subModuleName: d.subModuleName,
-    testCaseId: d.testCaseId,
-  }));
-}
+export const filterDefectsForTest = filterDefects;

@@ -1,11 +1,6 @@
-import { mockDb } from "../../mock/mockData";
-
-export async function updateRelease(id: number, data: any) {
-  const updated = mockDb.updateRelease(id, data);
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Release updated successfully',
-    data: updated,
-  };
-}
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const updateRelease = async (id, data) => {
+  const r = await apiClient.put(ENDPOINTS.releaseById(Number(id)), data);
+  return r.data;
+};

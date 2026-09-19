@@ -1,61 +1,22 @@
-import { mockDb } from "../../mock/mockData";
+import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
 
-export const deallocateModuleLeaderWithAllocateModuleId = async (allocateModuleId: number) => {
-  return { status: 'success', message: 'Deallocated successfully', data: { allocateModuleId } };
+export const deallocateDeveloper = async (moduleId: number, employeeId: number) => {
+  const r = await apiClient.delete(ENDPOINTS.subModuleDevDelete(moduleId, employeeId));
+  return r.data;
 };
 
-export const deallocateDeveloperFromModule = async (
-  projectId: number,
-  moduleId: number,
-  userId: number
-) => {
-  return { status: 'success', message: 'Developer deallocated from module', data: { projectId, moduleId, userId } };
+export const deallocateModuleLeaderWithAllocateModuleId = async (allocationId: number) => {
+  const r = await apiClient.delete(ENDPOINTS.DEALLOCATE_MODULE_LEADER(allocationId));
+  return r.data;
 };
 
-export const deallocateSubmoduleDeveloperWithAllocateModuleId = async (
-  allocateModuleId: number
-) => {
-  return { status: 'success', message: 'Submodule developer deallocated', data: { allocateModuleId } };
+export const deallocateDeveloperFromModule = async (projectId: number, moduleId: number, developerId: number) => {
+  const r = await apiClient.delete(ENDPOINTS.DEALLOCATE_MODULE_LEADER(developerId));
+  return r.data;
 };
 
-export const deallocateDeveloperFromSubmodule = async (
-  projectId: number,
-  moduleId: number,
-  submoduleId: number,
-  userId: number
-) => {
-  return { status: 'success', message: 'Developer deallocated from submodule', data: { projectId, moduleId, submoduleId, userId } };
-};
+export const deallocateDevelopers = deallocateModuleLeaderWithAllocateModuleId;
 
-export const reassignDeveloperWithAllocateModuleId = async (
-  allocateModuleId: number,
-  newUserId: number
-) => {
-  return { status: 'success', message: 'Developer reassigned', data: { allocateModuleId, newUserId } };
-};
-
-export const reassignSubmoduleDeveloperWithAllocateModuleId = async (
-  allocationId: number,
-  newUserId: number
-) => {
-  return { status: 'success', message: 'Submodule developer reassigned', data: { allocationId, newUserId } };
-};
-
-export const reassignDeveloperToModule = async (
-  projectId: number,
-  moduleId: number,
-  oldUserId: number,
-  newUserId: number
-) => {
-  return { status: 'success', message: 'Developer reassigned to module', data: { projectId, moduleId, oldUserId, newUserId } };
-};
-
-export const reassignDeveloperToSubmodule = async (
-  projectId: number,
-  moduleId: number,
-  submoduleId: number,
-  oldUserId: number,
-  newUserId: number
-) => {
-  return { status: 'success', message: 'Developer reassigned to submodule', data: { projectId, moduleId, submoduleId, oldUserId, newUserId } };
-};
+export const reassignDeveloperWithAllocateModuleId = async (id: number, data: any) => { return deallocateDevelopers(id); };
+export const reassignSubmoduleDeveloperWithAllocateModuleId = async (id: number, data: any) => { return deallocateDevelopers(id); };

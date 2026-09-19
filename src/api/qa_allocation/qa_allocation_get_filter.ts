@@ -1,62 +1,7 @@
-import { mockDb } from '../../mock/mockData';
-
-export interface allocated_testcases {
-  projectId: number;
-  releaseId: string;
-  moduleId: number;
-  subModuleId: number;
-}
-
-export interface allocated_testcase_details {
-  id: number;
-  testCaseId: string;
-  description: string;
-  steps: string;
-  type: string;
-  severity: string;
-}
-
-export interface GetAllocatedTestCases_Response {
-  status: string;
-  statusCode: number;
-  message: string;
-  data: allocated_testcase_details[];
-}
-
-export async function getAllocatedTestCases({ subModuleId }: allocated_testcases): Promise<GetAllocatedTestCases_Response> {
-  const testCases = mockDb.getTestCases(subModuleId);
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Allocated test cases retrieved successfully',
-    data: testCases.map(t => ({
-      id: t.id,
-      testCaseId: t.testcaseNo,
-      description: t.description,
-      steps: t.detailsSteps || t.steps || '',
-      type: t.defectTypeName,
-      severity: t.severityName,
-    })),
-  };
-}
-
-export interface BulkAssignOwnerResponse {
-  status: string;
-  statusCode: number;
-  message: string;
-  data?: any;
-}
-
-export async function bulkAssignOwner(ownerId: number, testCaseIds: number[]): Promise<BulkAssignOwnerResponse> {
-  testCaseIds.forEach(id => {
-    mockDb.updateTestCase(id, { assignedQaId: ownerId });
-  });
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Owner assigned successfully',
-    data: { ownerId, testCaseIds },
-  };
-}
+﻿import apiClient from "../../lib/api";
+import { ENDPOINTS } from "../../utils/apiendpoint";
+export const getQAAllocationFilter = async (releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.releaseTestCaseQaAllocation(releaseId)); return r.data.data??[]; } catch { return []; } };
+export const allocated_testcases = async (releaseId: number) => { try { const r = await apiClient.get(ENDPOINTS.releaseTestCaseQaAllocation(releaseId)); return r.data.data??[]; } catch { return []; } };
+export const allocated_testcase_details = async (releaseId: number, id: number) => { try { const r = await apiClient.get(ENDPOINTS.releaseTestCaseById(releaseId,id)); return r.data.data??{}; } catch { return {}; } };
+export const bulkAssignOwner = async (data: any) => { const r = await apiClient.post(ENDPOINTS.releaseTestCaseQaAllocation(data.releaseId??0),data); return r.data; };
+export const getAllocatedTestCases = allocated_testcases;

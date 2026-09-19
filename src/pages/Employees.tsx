@@ -36,7 +36,8 @@ interface LocalEmployee {
   email: string;
   contactNo: string;
   name: string;
-   designationId: number;
+  designationId: number;
+  designationName: string;
   joinDate: string;
   isActive:boolean;
   skills: string[];

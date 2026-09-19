@@ -74,7 +74,7 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
     }
     try {
       const res = await getModulesByProjectId(Number(selectedProjectId));
-      let moduleData = [];
+      let moduleData: any[] = [];
       if (Array.isArray(res)) {
         moduleData = res;
       } else if (res?.data && Array.isArray(res.data)) {
@@ -84,13 +84,22 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
       } else if (res?.data?.content && Array.isArray(res.data.content)) {
         moduleData = res.data.content;
       }
+
+      if (moduleData.length === 0 && projectModules && projectModules.length > 0) {
+        moduleData = projectModules;
+      }
+
       setModules(moduleData.map((m: any) => ({ 
         id: m.id?.toString(), 
-        name: m.name 
+        name: m.name || m.moduleName || `Module ${m.id}`
       })));
     } catch (error) {
       console.error("Error fetching modules:", error);
-      setModules([]);
+      if (projectModules && projectModules.length > 0) {
+        setModules(projectModules.map((m: any) => ({ id: m.id?.toString(), name: m.name || m.moduleName })));
+      } else {
+        setModules([]);
+      }
     }
   };
 
@@ -174,7 +183,6 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
       testCaseRequired: false,
       attachmentFile: null,
     });
-    setModules([]);
     setSubmodules([]);
     setAllocatedUsers([]);
   }, [selectedProjectId]);
@@ -183,84 +191,109 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
   useEffect(() => {
     if (formData.moduleId) {
       getSubmodulesByModuleId(Number(formData.moduleId))
-        .then(res => {
-          const mapped = (res.data || []).map((sm: any) => ({
+        .then((res: any) => {
+          const list = Array.isArray(res)
+            ? res
+            : Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.data?.data)
+            ? res.data.data
+            : [];
+          const mapped = list.map((sm: any) => ({
             id: sm.id?.toString() || sm.subModuleId?.toString(),
-            name: sm.subModuleName || sm.name || ''
+            name: sm.subModuleName || sm.name || `Submodule ${sm.id}`
           }));
           setSubmodules(mapped);
         })
         .catch(() => setSubmodules([]));
-      // Reset submodule selection and assigned users when module changes
-      setFormData(f => ({ ...f, subModuleId: "", assigntoId: "" }));
-      setAllocatedUsers([]); // <--- CLEAR allocated users when module changes
+      // Reset submodule selection when module changes
+      setFormData(f => ({ ...f, subModuleId: "" }));
     } else {
       setSubmodules([]);
     }
   }, [formData.moduleId]);
 
   // ------------------------------------------------------------
-  // NEW: Fetch allocated users for the selected submodule
-  // This mimics the Defects page mechanism
+  // Fetch allocated developers for the project / selected submodule
   // ------------------------------------------------------------
   useEffect(() => {
-    if (!formData.subModuleId || !selectedProjectId) {
+    if (!selectedProjectId) {
       setAllocatedUsers([]);
       return;
     }
     setIsAllocatedUsersLoading(true);
 
-    Promise.all([
-      getAllSubmoduleAllocatedDevBySubmoduleId(Number(formData.subModuleId))
-        .catch((error) => {
-          // If 404, treat as no developers allocated yet
-          if (error?.response?.status === 404) {
-            return { data: [] } as any;
-          }
-          throw error;
-        }),
-      getDevelopersWithRolesByProjectId(selectedProjectId),
-    ])
-      .then(([subModuleDevRes, projectDevsRaw]) => {
-        // 1. Extract employee IDs from submodule allocation response
-        const assignedEmployeeIds = new Set(
-          (subModuleDevRes?.data || []).map((d: any) => Number(d.employeeId))
-        );
+    const fetchDevs = async () => {
+      try {
+        const [subModuleDevRes, projectDevsRaw] = await Promise.all([
+          formData.subModuleId
+            ? getAllSubmoduleAllocatedDevBySubmoduleId(Number(formData.subModuleId)).catch(() => [])
+            : Promise.resolve([]),
+          getDevelopersWithRolesByProjectId(selectedProjectId).catch(() => []),
+        ]);
 
-        // 2. Get all project developers
-        const users = Array.isArray(projectDevsRaw)
+        const rawProjectUsers = Array.isArray(projectDevsRaw)
           ? projectDevsRaw
-          : projectDevsRaw?.data || projectDevsRaw?.users || [];
+          : (projectDevsRaw as any)?.data || (projectDevsRaw as any)?.users || [];
 
-        // 3. Map and filter to only those assigned to the submodule
-        const mappedUsers = users
-          .map((user: any) => ({
-            userId: user.employeeId || user.userId || user.id,
-            userName:
-              user.firstName && user.lastName
-                ? `${user.firstName} ${user.lastName}`.trim()
-                : user.userName || user.name || "Unknown User",
-            empId: user.employeeId || user.userId || user.id,
-          }))
-          .filter((u: any) => u.userId && u.userName && assignedEmployeeIds.has(Number(u.userId)));
+        const allProjectDevs = rawProjectUsers.map((user: any) => ({
+          userId: Number(user.employeeId || user.userId || user.id),
+          userName:
+            user.userWithRole ||
+            user.employeeName ||
+            (user.firstName && user.lastName
+              ? `${user.firstName} ${user.lastName}`.trim()
+              : user.userName || user.name || `Developer ${user.employeeId || user.userId || user.id}`),
+          empId: Number(user.employeeId || user.userId || user.id),
+        })).filter((u: any) => u.userId && u.userName);
 
-        setAllocatedUsers(mappedUsers);
+        const subDevList = Array.isArray(subModuleDevRes)
+          ? subModuleDevRes
+          : (subModuleDevRes as any)?.data || [];
 
-        
-        if (mappedUsers.length === 1) {
-          setFormData(prev => ({
-            ...prev,
-            assigntoId: mappedUsers[0].userId.toString(),
-          }));
+        let finalUsers: { userId: number; userName: string; empId: number }[] = [];
+
+        if (subDevList.length > 0) {
+          const assignedEmployeeIds = new Set(
+            subDevList.map((d: any) => Number(d.employeeId || d.userId || d.id)).filter(Boolean)
+          );
+
+          let matched = allProjectDevs.filter((u: any) => assignedEmployeeIds.has(Number(u.userId)));
+
+          if (matched.length === 0) {
+            matched = subDevList.map((d: any) => ({
+              userId: Number(d.employeeId || d.userId || d.id),
+              userName: d.employeeName || d.userName || d.name || `Developer ${d.employeeId || d.userId || d.id}`,
+              empId: Number(d.employeeId || d.userId || d.id),
+            })).filter((u: any) => u.userId);
+          }
+
+          finalUsers = matched.length > 0 ? matched : allProjectDevs;
         } else {
-          setFormData(prev => ({ ...prev, assigntoId: "" }));
+          finalUsers = allProjectDevs;
         }
-      })
-      .catch((error) => {
-        console.error("Failed to fetch developers allocated to submodule:", error);
+
+        setAllocatedUsers(finalUsers);
+
+        // Auto-select if only 1 developer or preserve valid selection
+        setFormData(prev => {
+          if (finalUsers.length === 1) {
+            return { ...prev, assigntoId: finalUsers[0].userId.toString() };
+          }
+          if (prev.assigntoId && finalUsers.some(u => u.userId.toString() === prev.assigntoId)) {
+            return prev;
+          }
+          return { ...prev, assigntoId: "" };
+        });
+      } catch (error) {
+        console.error("Failed to fetch developers:", error);
         setAllocatedUsers([]);
-      })
-      .finally(() => setIsAllocatedUsersLoading(false));
+      } finally {
+        setIsAllocatedUsersLoading(false);
+      }
+    };
+
+    fetchDevs();
   }, [formData.subModuleId, selectedProjectId]);
 
   useEffect(() => {
@@ -580,15 +613,11 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
                   </option>
                 ))}
               </select>
-              {}
               {formData.subModuleId && !isAllocatedUsersLoading && allocatedUsers.length > 0 && (
                 <p className="text-xs text-gray-500 mt-1">
-                  Assigned dev{allocatedUsers.length > 1 ? 's' : ''}:{' '}
+                  Available dev{allocatedUsers.length > 1 ? 's' : ''}:{' '}
                   {allocatedUsers.map(u => u.userName).join(', ')}
                 </p>
-              )}
-              {formData.subModuleId && !isAllocatedUsersLoading && allocatedUsers.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1">No developers assigned to this submodule</p>
               )}
             </div>
           </div>
@@ -675,19 +704,18 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Assigned To
               </label>
-              {}
               <select
                 value={formData.assigntoId}
                 onChange={e => handleInputChange('assigntoId', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                disabled={isAllocatedUsersLoading || !formData.subModuleId}
+                disabled={isAllocatedUsersLoading || !selectedProjectId}
                 required
               >
                 <option value="">
                   {isAllocatedUsersLoading
                     ? "Loading users..."
                     : allocatedUsers.length === 0
-                    ? "No users available for this submodule"
+                    ? "No developers available for this project"
                     : allocatedUsers.length === 1
                     ? "Auto-selected (only one)"
                     : "Select assignee"}

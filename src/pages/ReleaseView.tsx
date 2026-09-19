@@ -268,13 +268,13 @@ const getReleaseCardView = async (projectId = selectedProject) => {
   }
 
   try {
+    // projectReleaseCardView already returns the unwrapped array (r.data.data ?? [])
     const response = await projectReleaseCardView(projectId);
 
-    const releaseList =
-      response?.data?.data ||
-      response?.data?.content ||
-      response?.data ||
-      [];
+    // response is already an array; handle both array and wrapped object cases
+    const releaseList = Array.isArray(response)
+      ? response
+      : response?.data?.data ?? response?.data?.content ?? response?.data ?? [];
 
     setReleases(releaseList);
 
@@ -869,13 +869,16 @@ const handleProjectSelect = (
 
                         
                         
-               const payload = {
-               name: releaseFormData.name.trim(),
-               version: releaseFormData.version.trim(),
-               releaseDate: releaseFormData.releaseDate, 
-               releaseType_id: releaseFormData.releaseType_id,
-               project_id: Number(selectedProject),
-             };
+               const payload: any = {
+                name: releaseFormData.name.trim(),
+                version: releaseFormData.version.trim(),
+                releaseDate: releaseFormData.releaseDate, 
+                releaseType_id: releaseFormData.releaseType_id,
+                project_id: Number(selectedProject),
+              };
+              if (!editingReleaseId) {
+                payload.status = "HOLD";
+              }
            
            try {
             let createOrUpdateSucceeded = false;

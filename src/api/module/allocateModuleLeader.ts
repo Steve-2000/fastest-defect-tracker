@@ -1,55 +1,14 @@
-import { mockDb } from "../../mock/mockData";
-
-export interface AllocateModuleLeaderRequest {
-  projectId: number;
-  moduleId: number;
-  userId: number;
-}
-
-export interface AllocatedLeaderResponse {
-  allocateModuleId: number;
-  moduleId: number;
-  userId: number;
-  userName?: string;
-}
-
-export const allocateModuleLeader = async (data: AllocateModuleLeaderRequest) => {
-  const user = mockDb.getUserById(data.userId);
-  const updated = mockDb.updateModule(data.moduleId, {
-    leaderId: data.userId,
-    leaderName: user ? `${user.firstName} ${user.lastName}` : 'Module Leader',
-    allocatedLeader: {
-      id: Date.now(),
-      employeeId: data.userId,
-      employeeName: user ? `${user.firstName} ${user.lastName}` : 'Module Leader',
-      allocatedDate: new Date().toISOString().split('T')[0],
-    },
-  });
-
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Leader allocated successfully',
-    data: updated,
-  };
-};
-
-export const getAllocatedLeader = async (moduleId: number): Promise<AllocatedLeaderResponse | null> => {
-  const mod = mockDb.getModuleById(moduleId);
-  if (!mod || !mod.leaderId) return null;
-  return {
-    allocateModuleId: Date.now(),
-    moduleId: mod.id,
-    userId: mod.leaderId,
-    userName: mod.leaderName || 'Leader',
-  };
-};
-
-export const deallocateModuleLeader = async (allocateModuleId: number) => {
-  return {
-    status: 'success',
-    statusCode: 200,
-    message: 'Leader deallocated successfully',
-    data: { allocateModuleId },
-  };
+import apiClient from "../../lib/api"; import { ENDPOINTS } from "../../utils/apiendpoint";
+export const allocateModuleLeader = async (data) => { const r=await apiClient.post(ENDPOINTS.ALLOCATE_MODULE_LEADER,data); return r.data; };
+export const deallocateModuleLeader = async (id) => { const r=await apiClient.delete(ENDPOINTS.DEALLOCATE_MODULE_LEADER(id)); return r.data; };
+export const getModuleAllocatedLeader = async (mid: any) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.GET_MODULE_ALLOCATED_LEADER(mid));
+    if (Array.isArray(r.data)) return r.data;
+    if (r.data?.data && Array.isArray(r.data.data)) return r.data.data;
+    return [];
+  } catch (e) {
+    console.error("Error in getModuleAllocatedLeader:", e);
+    return [];
+  }
 };

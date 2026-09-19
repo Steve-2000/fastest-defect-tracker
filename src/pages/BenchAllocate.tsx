@@ -92,7 +92,7 @@ function AllocationPopover({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [anchorRef, onClose]);
 
-  
+
 
   const availablePeriods = Array.isArray(employee?.availablePeriods)
     ? employee.availablePeriods
@@ -100,7 +100,7 @@ function AllocationPopover({
 
   if (!employee) return null;
 
-  
+
 
   let style: React.CSSProperties = { display: "none" };
 
@@ -222,9 +222,9 @@ export default function BenchAllocate() {
   } = useApp();
 
   const navigate = useNavigate();
-  const {can} = usePermission();
+  const { can } = usePermission();
 
-  
+
 
   const [projects, setProjects] = useState<Project[]>([]);
 
@@ -232,7 +232,7 @@ export default function BenchAllocate() {
 
   const [projectsError, setProjectsError] = useState<string | null>(null);
 
-  
+
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     contextProjectId || null,
@@ -347,7 +347,7 @@ export default function BenchAllocate() {
     type: "success",
   });
 
-  
+
 
   const [maxAvailabilityMap, setMaxAvailabilityMap] = useState<{
     [employeeId: string]: number;
@@ -357,7 +357,7 @@ export default function BenchAllocate() {
     [employeeId: string]: boolean;
   }>({});
 
-  
+
 
   const showToast = (
     message: string,
@@ -385,19 +385,19 @@ export default function BenchAllocate() {
 
     return true;
   }
-  
+
 
   const [benchCurrentPage, setBenchCurrentPage] = useState(1);
 
   const benchPageSize = 5;
 
-  
+
 
   const [allocatedCurrentPage, setAllocatedCurrentPage] = useState(1);
 
   const allocatedPageSize = 5;
 
-  
+
 
   const [apiPagination, setApiPagination] = useState({
     totalElements: 0,
@@ -411,19 +411,19 @@ export default function BenchAllocate() {
     hasNext: false,
   });
 
-  
+
 
   const [expandedBenchUserId, setExpandedBenchUserId] = useState<string | null>(
     null,
   );
 
-  
+
 
   const [openAllocationUserId, setOpenAllocationUserId] = useState<
     string | null
   >(null);
 
-  
+
 
   useEffect(() => {
     if (contextProjectId && contextProjectId !== selectedProjectId) {
@@ -431,7 +431,7 @@ export default function BenchAllocate() {
     }
   }, [contextProjectId, selectedProjectId]);
 
-  
+
 
   useEffect(() => {
     setProjectsLoading(true);
@@ -448,7 +448,7 @@ export default function BenchAllocate() {
 
         setProjectsError(null);
 
-        
+
 
         if (!selectedProjectId && projectsArray.length > 0) {
           const firstActiveProject = projectsArray.find(
@@ -470,7 +470,7 @@ export default function BenchAllocate() {
       .finally(() => setProjectsLoading(false));
   }, []);
 
-  
+
 
   const fetchBenchEmployees = async (
     searchParams: BenchSearchParams = {},
@@ -496,10 +496,10 @@ export default function BenchAllocate() {
         filters.endDate = toDateFilter;
       }
 
-      
+
       const response = await getBenchAvailability(0, 1000, filters);
 
-      
+
       let benchData = [];
       if (response.data?.data && Array.isArray(response.data.data)) {
         benchData = response.data.data;
@@ -519,7 +519,7 @@ export default function BenchAllocate() {
         )
         .map((item: any) => ({
           id: String(item.employee?.id || item.id),
-          firstName: item.employee?.firstName || item.firstName || "",
+          firstName: item.employee?.name || item.employee?.firstName || item.firstName || "",
           lastName: item.employee?.lastName || item.lastName || "",
           email: item.employee?.email || item.email || "",
           phone: item.employee?.contactNo || item.contactNo || "",
@@ -538,27 +538,27 @@ export default function BenchAllocate() {
     }
   };
 
-  
+
 
   const handleBenchPageChange = (newPage: number) => {
     setBenchCurrentPage(newPage);
 
-    
+
 
     if (apiPagination.totalPages > 0 && benchFilter.trim().length === 0) {
-      fetchBenchEmployees({}, newPage - 1, benchPageSize); 
+      fetchBenchEmployees({}, newPage - 1, benchPageSize);
     }
   };
 
-  
+
 
   useEffect(() => {
     fetchBenchEmployees();
   }, []);
 
-  
 
-  
+
+
   useEffect(() => {
     if (selectedProjectId) {
       const fetchAllocations = async () => {
@@ -586,17 +586,19 @@ export default function BenchAllocate() {
 
           console.log("Extracted allocations from response:", allocations);
 
-          
+
           const mappedAllocations = allocations.map((alloc: any) => ({
             id: alloc.id,
             userFullName:
               alloc.userFullName ||
               (alloc.firstName
-                ? `${alloc.firstName} ${alloc.lastName}`
-                : alloc.employee?.firstName
-                  ? `${alloc.employee.firstName} ${alloc.employee.lastName}`
-                  : "Unknown"),
-            firstName: alloc.firstName || alloc.employee?.firstName || "",
+                ? `${alloc.firstName} ${alloc.lastName || ""}`
+                : alloc.employee?.name
+                  ? alloc.employee.name
+                  : alloc.employee?.firstName
+                    ? `${alloc.employee.firstName} ${alloc.employee.lastName || ""}`
+                    : "Unknown"),
+            firstName: alloc.firstName || alloc.employee?.firstName || alloc.employee?.name || "",
             lastName: alloc.lastName || alloc.employee?.lastName || "",
             roleName: alloc.roleName || alloc.role?.name || "",
             allocationPercentage:
@@ -657,10 +659,16 @@ export default function BenchAllocate() {
         }
 
         // Map to expected format: { id, roleName }
-        const formattedRoles = rolesArray.map((role: any) => ({
-          id: role.id,
-          roleName: role.name, // Backend uses 'name', component expects 'roleName'
-        }));
+        const formattedRoles = rolesArray.map((role: any) => {
+          let typeLabel = role.type || "";
+          if (typeLabel) {
+            typeLabel = typeLabel.split('_').map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+          }
+          return {
+            id: role.id,
+            roleName: role.name,
+          };
+        });
 
         console.log("Formatted roles:", formattedRoles);
         setRoles(formattedRoles);
@@ -757,11 +765,11 @@ export default function BenchAllocate() {
 
           fetchBenchEmployees();
         }
-      }, 100); 
+      }, 100);
     };
   }, []);
 
-  
+
 
   const debouncedDateSearch = useMemo(() => {
     let timeoutId: number;
@@ -791,8 +799,8 @@ export default function BenchAllocate() {
               searchParams.endDate = toDate.trim();
             }
 
-            
-            
+
+
           } catch (error: any) {
             console.error("Date API search failed:", error);
 
@@ -802,20 +810,20 @@ export default function BenchAllocate() {
               error.response?.data,
             );
 
-            
+
           } finally {
             setIsSearching(false);
           }
         } else {
-          
+
 
           fetchBenchEmployees();
         }
-      }, 30); 
+      }, 30);
     };
   }, []);
 
-  
+
 
   const debouncedProjectNameSearch = useMemo(() => {
     let timeoutId: number;
@@ -832,9 +840,9 @@ export default function BenchAllocate() {
             searchTerm.trim(),
           );
 
-          
 
-          
+
+
 
           setDeallocationFilter(searchTerm.trim());
         } else {
@@ -1002,10 +1010,10 @@ export default function BenchAllocate() {
     return project;
   }, [selectedProjectId, projects]);
 
-  
+
 
   const benchEmployees = useMemo(() => {
-    
+
 
     const hasActiveFilters =
       designationFilter.length > 0 ||
@@ -1014,18 +1022,18 @@ export default function BenchAllocate() {
       toDateFilter;
 
     if (hasActiveFilters) {
-      
+
 
       return employees;
     }
 
-    
+
 
     const allocations = selectedProjectId
       ? projectAllocations[selectedProjectId] || []
       : [];
 
-    
+
 
     return employees
       .map((e) => {
@@ -1054,7 +1062,7 @@ export default function BenchAllocate() {
     toDateFilter,
   ]);
 
-  
+
 
   const filteredBench = useMemo(() => {
     let filtered = benchEmployees;
@@ -1098,15 +1106,15 @@ export default function BenchAllocate() {
     toDateFilter,
   ]);
 
-const allocatedEmployees = useMemo(
-  () =>
-    selectedProjectId
-      ? (projectAllocations[selectedProjectId] || []).filter(
+  const allocatedEmployees = useMemo(
+    () =>
+      selectedProjectId
+        ? (projectAllocations[selectedProjectId] || []).filter(
           (emp: any) => emp.roleId !== 2
         )
-      : [],
-  [projectAllocations, selectedProjectId],
-);
+        : [],
+    [projectAllocations, selectedProjectId],
+  );
   const projectRoleOptions = useMemo(() => {
     const uniqueRoles = new Set<string>();
 
@@ -1174,9 +1182,9 @@ const allocatedEmployees = useMemo(
 
   const paginatedBenchEmployees = useClientPagination
     ? filteredBench.slice(
-        (benchCurrentPage - 1) * benchPageSize,
-        benchCurrentPage * benchPageSize,
-      )
+      (benchCurrentPage - 1) * benchPageSize,
+      benchCurrentPage * benchPageSize,
+    )
     : filteredBench;
 
   // Pagination calculations for allocated employees
@@ -1255,7 +1263,7 @@ const allocatedEmployees = useMemo(
 
         try {
           if (emp.allocationId) {
-            
+
             await updateProjectAllocation(
               emp.allocationId, {
               endDate: emp.allocationEndDate,
@@ -1265,7 +1273,7 @@ const allocatedEmployees = useMemo(
               ),
             });
           } else {
-            
+
             await postProjectAllocations(payload);
           }
         } catch (error: any) {
@@ -1280,10 +1288,10 @@ const allocatedEmployees = useMemo(
       } else {
         setAllocationSuccessModal(true);
 
-        
+
         await fetchBenchEmployees({}, 0, benchPageSize);
 
-        
+
         await refreshProjectAllocations();
 
         setSelectedBench([]);
@@ -1324,7 +1332,7 @@ const allocatedEmployees = useMemo(
 
       console.log("Extracted allocations:", allocations);
 
-      
+
       const mappedAllocations = allocations.map((alloc: any) => ({
         id: alloc.id,
         userFullName:
@@ -1389,11 +1397,11 @@ const allocatedEmployees = useMemo(
     }
   };
 
-  
 
-  
 
-  
+
+
+
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -1410,7 +1418,7 @@ const allocatedEmployees = useMemo(
     }
   }, [openAllocationUserId]);
 
-  
+
 
   useEffect(() => {
     if (allocationModal.open && allocationModal.employees.length > 0) {
@@ -1492,7 +1500,7 @@ const allocatedEmployees = useMemo(
     }
   };
 
-  
+
 
   const handleProjectNameFilterChange = (value: string) => {
     setDeallocationFilter(value);
@@ -1509,7 +1517,7 @@ const allocatedEmployees = useMemo(
     setAllocatedCurrentPage(1);
   };
 
-  
+
 
   const validateAllocationDates = (
     employeeId: string,
@@ -1563,7 +1571,7 @@ const allocatedEmployees = useMemo(
     return Object.keys(errors).length === 0;
   };
 
-  
+
 
   const fetchMaxAvailability = async (
     employeeId: string,
@@ -1576,7 +1584,7 @@ const allocatedEmployees = useMemo(
       return;
     }
 
-    
+
 
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -1597,21 +1605,21 @@ const allocatedEmployees = useMemo(
 
       console.log("Max availability API response:", response);
 
-      
-      
+
+
       let maxPercentage = 0;
 
       if (response.data && typeof response.data === "number") {
-        
+
         maxPercentage = response.data;
       } else if (response.data?.maxAvailablePercentage) {
-        
+
         maxPercentage = response.data.maxAvailablePercentage;
       } else if (response.maxAvailablePercentage) {
-        
+
         maxPercentage = response.maxAvailablePercentage;
       } else if (response.data?.data) {
-        
+
         maxPercentage = response.data.data;
       }
 
@@ -1624,7 +1632,7 @@ const allocatedEmployees = useMemo(
     } catch (error) {
       console.error("Failed to fetch max availability:", error);
 
-      
+
 
       const employee = employees.find((emp) => emp.id === employeeId);
 
@@ -1635,7 +1643,7 @@ const allocatedEmployees = useMemo(
         [employeeId]: fallbackAvailability,
       }));
 
-      
+
 
       console.warn(
         `Using fallback availability (${fallbackAvailability}%) for employee ${employeeId} due to API error`,
@@ -1647,7 +1655,7 @@ const allocatedEmployees = useMemo(
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-[#111827] p-6 flex flex-col">
-      {}
+      { }
 
       <div className="flex justify-between items-center mb-4">
         <div className="flex-1">
@@ -1687,7 +1695,7 @@ const allocatedEmployees = useMemo(
                 </span>
               </div>
 
-              {}
+              { }
             </div>
           ) : (
             <div className="flex items-center gap-2 mt-2 bg-yellow-50 px-3 py-1 rounded-lg">
@@ -1709,7 +1717,7 @@ const allocatedEmployees = useMemo(
         </Button>
       </div>
 
-      {}
+      { }
 
       <ProjectSelector
         projects={projects}
@@ -1718,10 +1726,10 @@ const allocatedEmployees = useMemo(
         className="mb-4"
       />
 
-      {}
+      { }
 
       <div className="flex flex-1 gap-6 relative">
-        {}
+        { }
 
         <div className="bg-white rounded-lg p-4 flex flex-col shadow-[0_4px_24px_0_rgba(0,0,0,0.08)] w-[calc(50%-24px)] mr-6 min-w-0 overflow-hidden">
           <div className="flex items-center justify-between mb-2 bg-[#e3f0fa] rounded-xl px-6 py-3 shadow-[0_2px_8px_0_rgba(0,0,0,0.04)]">
@@ -1748,7 +1756,7 @@ const allocatedEmployees = useMemo(
             </div>
           </div>
 
-          {}
+          { }
 
           <div className="mb-2 px-4 py-1 bg-gray-50 rounded">
             <div className="text-sm text-gray-600">
@@ -1787,10 +1795,10 @@ const allocatedEmployees = useMemo(
             </div>
           </div>
 
-          {}
+          { }
 
           <div className="mb-4 space-y-3">
-            {}
+            { }
 
             <div className="relative">
               <Input
@@ -1808,7 +1816,7 @@ const allocatedEmployees = useMemo(
             </div>
 
             <div className="flex flex-wrap gap-4">
-              {}
+              { }
               <div className="w-40 relative">
                 <SearchableSelect
                   options={designations.map((d) => ({
@@ -1875,7 +1883,7 @@ const allocatedEmployees = useMemo(
                   </div>
                 )}
               </div>
-              {}
+              { }
               <Input
                 type="date"
                 value={fromDateFilter}
@@ -1892,7 +1900,7 @@ const allocatedEmployees = useMemo(
                 className="w-40"
                 title="Select end date for availability period"
               />
-              {}
+              { }
               <select
                 value={
                   availabilityFilter[0] ? String(availabilityFilter[0]) : ""
@@ -2065,8 +2073,8 @@ const allocatedEmployees = useMemo(
               <div className="text-center py-8">
                 <p className="text-gray-500">
                   {benchFilter.trim() ||
-                  designationFilter.length > 0 ||
-                  availabilityFilter.length > 0
+                    designationFilter.length > 0 ||
+                    availabilityFilter.length > 0
                     ? "No user found"
                     : "No employees found"}
                 </p>
@@ -2074,7 +2082,7 @@ const allocatedEmployees = useMemo(
             )}
           </div>
 
-          {}
+          { }
 
           {benchTotalPages > 1 && (
             <div className="flex justify-center items-center gap-2 py-4">
@@ -2126,10 +2134,10 @@ const allocatedEmployees = useMemo(
           )}
         </div>
 
-        {}
+        { }
 
         <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center gap-4 z-10">
-        
+
           <Button
             className="bg-[#2563EB] text-white rounded-full p-3 shadow-lg"
             disabled={
@@ -2151,7 +2159,7 @@ const allocatedEmployees = useMemo(
           </Button>
         </div>
 
-        {}
+        { }
 
         <div className="bg-white rounded-lg p-4 flex flex-col shadow-[0_4px_24px_0_rgba(0,0,0,0.08)] w-[calc(50%-24px)] ml-6 min-w-0 overflow-hidden">
           <div className="flex items-center justify-between mb-2 bg-[#e3f0fa] rounded-xl px-6 py-3 shadow-[0_2px_8px_0_rgba(0,0,0,0.04)] min-w-0">
@@ -2186,7 +2194,7 @@ const allocatedEmployees = useMemo(
             </div>
           </div>
 
-          {}
+          { }
 
           {currentProject ? (
             <div className="bg-blue-25 border-b border-blue-100 px-4 py-3">
@@ -2206,8 +2214,8 @@ const allocatedEmployees = useMemo(
                     <span>
                       {currentProject.startDate
                         ? new Date(
-                            currentProject.startDate,
-                          ).toLocaleDateString()
+                          currentProject.startDate,
+                        ).toLocaleDateString()
                         : "Not set"}
                     </span>
                   </div>
@@ -2236,7 +2244,7 @@ const allocatedEmployees = useMemo(
             </div>
           )}
 
-          {}
+          { }
 
           <div className="px-4 py-2 bg-gray-50 border-b">
             <div className="text-sm text-gray-600">
@@ -2270,7 +2278,7 @@ const allocatedEmployees = useMemo(
             </div>
           </div>
 
-          {}
+          { }
 
           <div className="mb-4 space-y-3 px-4 py-2">
             <div className="relative">
@@ -2415,14 +2423,14 @@ const allocatedEmployees = useMemo(
                           {emp.startDate ? emp.startDate.split("T")[0] : "-"}
                         </td>
                         <td>{emp.endDate ? emp.endDate.split("T")[0] : "-"}</td>
-                        
-                          {can.projectAllocation.extend && <td>
+
+                        {can.projectAllocation.extend && <td>
                           <Button
                             size="sm"
                             variant="primary"
                             onClick={(e) => {
                               e.stopPropagation();
-                              
+
                               const mappedEmp = {
                                 id: emp.id,
                                 allocationId: emp.id,
@@ -2474,7 +2482,7 @@ const allocatedEmployees = useMemo(
                   </tbody>
                 </table>
 
-                {}
+                { }
 
                 {allocatedTotalPages > 1 && (
                   <div className="flex justify-center items-center gap-2 py-4">
@@ -2488,19 +2496,18 @@ const allocatedEmployees = useMemo(
                       Previous
                     </button>
 
-              {Array.from({ length: allocatedTotalPages }, (_, i) => i + 1).map((p) => (
-  <button
-    key={p}
-    className={`px-3 py-1 rounded border ${
-      allocatedCurrentPage === p
-        ? "bg-blue-500 text-white"
-        : "bg-gray-100 text-gray-700"
-    }`}
-    onClick={() => setAllocatedCurrentPage(p)}
-  >
-    {p}
-  </button>
-))}
+                    {Array.from({ length: allocatedTotalPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        className={`px-3 py-1 rounded border ${allocatedCurrentPage === p
+                          ? "bg-blue-500 text-white"
+                          : "bg-gray-100 text-gray-700"
+                          }`}
+                        onClick={() => setAllocatedCurrentPage(p)}
+                      >
+                        {p}
+                      </button>
+                    ))}
 
                     <button
                       className="px-3 py-1 rounded border bg-gray-100 text-gray-700 disabled:opacity-50"
@@ -2521,7 +2528,7 @@ const allocatedEmployees = useMemo(
         </div>
       </div>
 
-      {}
+      { }
 
       {allocationModal.open && (
         <Modal
@@ -2543,7 +2550,7 @@ const allocatedEmployees = useMemo(
           size="2xl"
         >
           <div className="flex flex-col gap-6 p-6 min-w-[900px]">
-            {}
+            { }
 
             {currentProject && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
@@ -2567,14 +2574,14 @@ const allocatedEmployees = useMemo(
                           Start Date:{" "}
                           {currentProject.startDate
                             ? new Date(
-                                currentProject.startDate,
-                              ).toLocaleDateString()
+                              currentProject.startDate,
+                            ).toLocaleDateString()
                             : "Not set"}{" "}
                           - End Date:{" "}
                           {currentProject.endDate
                             ? new Date(
-                                currentProject.endDate,
-                              ).toLocaleDateString()
+                              currentProject.endDate,
+                            ).toLocaleDateString()
                             : "Not set"}
                         </span>
                       </div>
@@ -2589,7 +2596,7 @@ const allocatedEmployees = useMemo(
                 key={emp.id}
                 className="bg-white border border-gray-200 rounded-lg flex items-center gap-8 p-6 w-full relative"
               >
-                {}
+                { }
 
                 {allocationModal.employees.length > 1 && (
                   <button
@@ -2603,7 +2610,7 @@ const allocatedEmployees = useMemo(
                         ),
                       }));
 
-                      
+
 
                       setMaxAvailabilityMap((prev) => {
                         const newMap = { ...prev };
@@ -2628,7 +2635,7 @@ const allocatedEmployees = useMemo(
                   </button>
                 )}
 
-                {}
+                { }
 
                 <div className="flex flex-col min-w-[180px]">
                   <span className="font-semibold">
@@ -2640,7 +2647,7 @@ const allocatedEmployees = useMemo(
                   </span>
                 </div>
 
-                {}
+                { }
 
                 <div className="flex flex-col min-w-[140px]">
                   <label className="text-sm font-medium text-gray-700 mb-1">
@@ -2648,7 +2655,7 @@ const allocatedEmployees = useMemo(
                   </label>
 
                   <select
-                    
+
                     value={emp.roleId || ""}
                     onChange={(e) => {
                       const selectedRoleId = Number(e.target.value);
@@ -2663,10 +2670,10 @@ const allocatedEmployees = useMemo(
                         employees: modal.employees.map((employee, i) =>
                           i === index
                             ? {
-                                ...employee,
-                                roleId: selectedRoleId,
-                                role: selectedRole?.roleName,
-                              }
+                              ...employee,
+                              roleId: selectedRoleId,
+                              role: selectedRole?.roleName,
+                            }
                             : employee,
                         ),
                       }));
@@ -2677,11 +2684,11 @@ const allocatedEmployees = useMemo(
                     <option value="">Select Role</option>
 
                     {roles
-                    .filter((role) => role.id !== 1 && role.id !== 2).map((role) => (
-                      <option key={role.id} value={role.id}>
-                        {role.roleName}
-                      </option>
-                    ))}
+                      .filter((role) => role.id !== 1 && role.id !== 2).map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.roleName}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
@@ -2714,7 +2721,7 @@ const allocatedEmployees = useMemo(
                         ),
                       }));
 
-                      
+
 
                       validateAllocationDates(
                         emp.id,
@@ -2732,11 +2739,10 @@ const allocatedEmployees = useMemo(
                         );
                       }
                     }}
-                    className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 ${
-                      dateValidationErrors[emp.id]?.startDate
-                        ? "border-red-500"
-                        : "border-[#D1D5DB]"
-                    }`}
+                    className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 ${dateValidationErrors[emp.id]?.startDate
+                      ? "border-red-500"
+                      : "border-[#D1D5DB]"
+                      }`}
                     style={{ minWidth: 120 }}
                   />
 
@@ -2822,11 +2828,10 @@ const allocatedEmployees = useMemo(
                         );
                       }
                     }}
-                    className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 ${
-                      dateValidationErrors[emp.id]?.endDate
-                        ? "border-red-500"
-                        : "border-[#D1D5DB]"
-                    }`}
+                    className={`w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 ${dateValidationErrors[emp.id]?.endDate
+                      ? "border-red-500"
+                      : "border-[#D1D5DB]"
+                      }`}
                     style={{ minWidth: 120 }}
                   />
 
@@ -2870,7 +2875,7 @@ const allocatedEmployees = useMemo(
                   )}
                 </div>
 
-                {}
+                { }
 
                 <div className="flex flex-col min-w-[120px]">
                   <label className="text-sm font-medium text-gray-700 mb-1">
@@ -2899,7 +2904,7 @@ const allocatedEmployees = useMemo(
                       className="w-16 border border-[#D1D5DB] rounded px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                     />
 
-                    {}
+                    { }
                   </div>
                 </div>
               </div>
@@ -2939,7 +2944,7 @@ const allocatedEmployees = useMemo(
         </Modal>
       )}
 
-      {}
+      { }
 
       {viewInfoEmployee && (
         <Modal
@@ -2971,7 +2976,7 @@ const allocatedEmployees = useMemo(
         type={toast.type}
       />
 
-      {}
+      { }
 
       <Modal
         isOpen={deallocationConfirmModal}
@@ -3004,7 +3009,7 @@ const allocatedEmployees = useMemo(
         </div>
       </Modal>
 
-      {}
+      { }
 
       <Modal
         isOpen={allocationSuccessModal}

@@ -74,6 +74,10 @@ const Designation: React.FC = () => {
     showToast("Designation name cannot be empty", "error");
     return;
   }
+  if (["admin", "administrator", "super admin", "system administrator"].includes(trimmed.toLowerCase())) {
+    showToast("This designation name is reserved for system use", "error");
+    return;
+  }
 
   try {
     const response = await createDesignation({ name: trimmed });
@@ -96,6 +100,10 @@ const Designation: React.FC = () => {
   const trimmed = formData.name.trim();
   if (trimmed === editingDesignation.name.trim()) {
     showToast('No changes were made to the designation', 'error');
+    return;
+  }
+  if (["admin", "administrator", "super admin", "system administrator"].includes(trimmed.toLowerCase())) {
+    showToast("This designation name is reserved for system use", "error");
     return;
   }
   const exists = designations.some(
