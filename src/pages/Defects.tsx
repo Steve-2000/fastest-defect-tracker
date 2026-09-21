@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { deleteDefectById } from "../api/defect/delete_defect";
 import { getAllSubmoduleAllocatedDevBySubmoduleId } from "../api/subModuleDevAlloc";
 import { ReassignDefects } from '../pages/ReassignDefects';
+import { bulkReassignDefectsApi } from '../api/defect/reassignDefect';
 import {
   Plus,
   Edit2,
@@ -23,10 +24,11 @@ import { Modal } from "../components/ui/Modal";
 import { SearchableMultiSelect } from "../components/ui/SearchableMultiSelect";
 import { useApp } from "../context/AppContext";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import * as XLSX from "xlsx";
 import { importDefects } from "../api/importTestCase";
 import { getAllPriorities, Priority } from "../api/priority";
 import { getAllDefectStatuses, DefectStatus } from "../api/defectStatus";
-import { getNextStatuses } from "../api/workflow";
+import { getNextStatuses, getWorkflowStartStatus } from "../api/workflow";
 import { getDefectTypes } from "../api/defectType";
 import { getSeverities } from "../api/severity";
 import { ProjectSelector } from "../components/ui/ProjectSelector";
@@ -123,7 +125,7 @@ export const Defects: React.FC = () => {
     employees,
   } = useApp();
 
-  
+
   const [selectedProjectId, setSelectedProjectIdLocal] = React.useState<
     string | null
   >(projectId || null);
@@ -135,11 +137,11 @@ export const Defects: React.FC = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
-  
+
   const [backendDefects, setBackendDefects] = React.useState<FilteredDefect[]>(
     [],
   );
-  
+
   const [statusMap, setStatusMap] = React.useState<Record<number, string>>({});
   const [severityMap, setSeverityMap] = React.useState<Record<number, string>>(
     {},
@@ -158,7 +160,7 @@ export const Defects: React.FC = () => {
     null,
   );
 
-  
+
   const [alert, setAlert] = useState<{ open: boolean; message: string }>({
     open: false,
     message: "",
@@ -181,25 +183,22 @@ export const Defects: React.FC = () => {
         showAlert('Please select at least one defect to reassign.');
         throw new Error('Please select at least one defect to reassign.');
       }
-      
+
       if (!assignedToId) {
         showAlert('Please select a developer to reassign to.');
         throw new Error('Please select a developer to reassign to.');
       }
 
-      defectIds.forEach((id: any) => {
-        mockDb.updateDefect(Number(id), { assignedToId: Number(assignedToId) });
-      });
-
-      const successMessage = `Successfully reassigned ${defectIds.length} defect(s)`;
+      const res = await bulkReassignDefectsApi(defectIds, Number(assignedToId));
+      const successMessage = res?.statusMessage || `Successfully reassigned ${defectIds.length} defect(s)`;
       showAlert(`✅ ${successMessage}`);
       await fetchData();
       return { status: 'Success', message: successMessage };
     } catch (error: any) {
       console.error('❌ Bulk reassign error:', error);
-      
+
       let errorMessage = 'Failed to reassign defects. Please try again.';
-      
+
       if (error.response) {
         const { status, data } = error.response;
         if (data?.message) {
@@ -222,7 +221,7 @@ export const Defects: React.FC = () => {
       } else if (error.message) {
         errorMessage = error.message;
       }
-      
+
       showAlert(`❌ ${errorMessage}`);
       throw new Error(errorMessage);
     }
@@ -394,13 +393,62 @@ export const Defects: React.FC = () => {
 
   const loadWorkflowStartStatus = async () => {
     try {
-      const statuses = mockDb.getStatuses();
-      if (statuses.length > 0) {
-        setWorkflowStartStatusId(statuses[0].id.toString());
+      // Call backend: returns the status that has no incoming transitions (in-degree 0 = true start node)
+      const res = await getWorkflowStartStatus();
+      if (res?.data?.id) {
+        const startId = res.data.id.toString();
+        setWorkflowStartStatusId(startId);
+        setFormData((prev) => ({ ...prev, statusId: startId }));
+        return startId;
+      } else {
+        // Fallback: fetch all statuses and use first
+        const { getAllDefectStatuses } = await import("../api/defectStatus");
+        const statusRes = await getAllDefectStatuses();
+        const list: any[] = statusRes?.data ?? statusRes?.content ?? [];
+        if (list.length > 0) {
+          const startId = (list[0].id ?? list[0].statusId ?? "").toString();
+          setWorkflowStartStatusId(startId);
+          setFormData((prev) => ({ ...prev, statusId: startId }));
+          return startId;
+        }
       }
     } catch (error) {
       console.error("Failed to load workflow start status:", error);
     }
+    return "";
+  };
+
+  // Opens the Add Defect modal with a clean form and the correct start status pre-selected.
+  const openAddModal = async () => {
+    // Re-fetch the start status in case the workflow changed, or the state was cleared.
+    const startId = workflowStartStatusId || (await loadWorkflowStartStatus());
+
+    setEditingDefect(null);
+    setFormData({
+      defectId: "",
+      id: "",
+      description: "",
+      steps: "",
+      moduleId: "",
+      subModuleId: "",
+      severityId: "",
+      priorityId: "",
+      typeId: "",
+      assigntoId: "",
+      assignbyId: "",
+      releaseId: "",
+      attachment: "",
+      statusId: startId,  // always the correct workflow start node
+      testCaseId: "",
+      testCaseRequired: false,
+    });
+    setSubmodules([]);
+    setAllocatedUsers([]);
+    setNextStatuses([]);
+    setNextStatusError(null);
+    setOriginalStatusId("");
+    setSelectedNextStatusId("");
+    setIsModalOpen(true);
   };
 
   useEffect(() => {
@@ -408,7 +456,7 @@ export const Defects: React.FC = () => {
   }, []);
   const commentsContainerRef = React.useRef<HTMLDivElement>(null);
 
-  
+
   useEffect(() => {
     if (commentsContainerRef.current) {
       commentsContainerRef.current.scrollTop =
@@ -417,23 +465,23 @@ export const Defects: React.FC = () => {
   }, [commentsByDefectId, activeCommentsDefectId, isCommentsLoading]);
   const { projects, switchProject } = useAccessibleProjects();
 
-  
-  
+
+
 
   React.useEffect(() => {
     if (projectId) setSelectedProjectIdLocal(projectId);
   }, [projectId]);
 
-  
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedFilters(filters);
-    }, 300); 
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [filters]);
 
-  
+
   React.useEffect(() => {
     getSeverities().then((res) =>
       setSeverityMap(
@@ -458,7 +506,7 @@ export const Defects: React.FC = () => {
     );
   }, []);
 
-  
+
   useEffect(() => {
     if (!selectedProjectId) {
       setProjectDevelopers([]);
@@ -485,7 +533,7 @@ export const Defects: React.FC = () => {
         }
 
         const mappedDevelopers = developers.map((dev: any) => ({
-          id: dev.employeeId || dev.userId || dev.id, 
+          id: dev.employeeId || dev.userId || dev.id,
           name:
             dev.firstName && dev.lastName
               ? `${dev.firstName} ${dev.lastName}`.trim()
@@ -502,7 +550,7 @@ export const Defects: React.FC = () => {
       });
   }, [selectedProjectId]);
 
-  
+
   React.useEffect(() => {
     if (!selectedProjectId) return;
     getAllDefectStatuses().then((statuses) => {
@@ -518,7 +566,7 @@ export const Defects: React.FC = () => {
           (modules.data || []).map((m: any) => [m.id, m.name]),
         ),
       );
-      
+
       Promise.all(
         (modules.data || []).map((m: any) => getSubmodulesByModuleId(m.id)),
       )
@@ -534,9 +582,9 @@ export const Defects: React.FC = () => {
         .catch(() => setSubmoduleMap({}));
     });
   }, [selectedProjectId]);
-  
-  
-  
+
+
+
   React.useEffect(() => {
     if (!selectedProjectId) return;
     getModulesByProjectId(selectedProjectId)
@@ -544,10 +592,10 @@ export const Defects: React.FC = () => {
         const list = Array.isArray(res)
           ? res
           : Array.isArray(res?.data)
-          ? res.data
-          : Array.isArray(res?.data?.data)
-          ? res.data.data
-          : [];
+            ? res.data
+            : Array.isArray(res?.data?.data)
+              ? res.data.data
+              : [];
         setModules(
           list.map((m: any) => ({
             id: m.id?.toString(),
@@ -560,15 +608,15 @@ export const Defects: React.FC = () => {
         setModules([]);
       });
   }, [selectedProjectId]);
-  
-  
+
+
   const saveEditedComment = async (comment: any, commentId: string) => {
     if (editingCommentText.trim()) {
       try {
-        
+
         await updateComment(comment.id, editingCommentText);
 
-        
+
         setCommentsByDefectId((prev) => {
           const updatedComments = prev[activeCommentsDefectId].map((c) =>
             c.timestamp === comment.timestamp && c.userId === comment.userId
@@ -591,15 +639,15 @@ export const Defects: React.FC = () => {
     }
   };
 
-// Add this helper function at the top of the component or outside
-const formatTimeWithoutMs = (timeStr: string) => {
-  if (!timeStr) return timeStr;
-  if (timeStr.includes('.')) {
-    return timeStr.split('.')[0];
-  }
-  const match = timeStr.match(/^(\d{2}:\d{2}:\d{2})/);
-  return match ? match[1] : timeStr;
-};
+  // Add this helper function at the top of the component or outside
+  const formatTimeWithoutMs = (timeStr: string) => {
+    if (!timeStr) return timeStr;
+    if (timeStr.includes('.')) {
+      return timeStr.split('.')[0];
+    }
+    const match = timeStr.match(/^(\d{2}:\d{2}:\d{2})/);
+    return match ? match[1] : timeStr;
+  };
 
   // Helper to map backend defect fields to frontend expected fields
   const mapDefect = (d: any) => {
@@ -607,7 +655,10 @@ const formatTimeWithoutMs = (timeStr: string) => {
 
     const mapped = {
       id: d.id,
-      defectId: d.defectNo || d.defect_id || d.defectId || String(d.id || ""),
+      projectDefectNumber: d.projectDefectNumber,
+      defectId: d.projectDefectNumber
+        ? `DEF-${d.projectDefectNumber}`
+        : (d.defectNo || d.defect_id || d.defectId || String(d.id || "")),
       description: d.description || "",
       steps: d.stepsToRecreation || d.steps || "",
 
@@ -623,10 +674,10 @@ const formatTimeWithoutMs = (timeStr: string) => {
       isAddTestCase: d.isAddTestCase ?? true,
 
       // Names from direct fields
-      severity_name: d.severityName || "",
-      priority_name: d.priorityName || "",
-      defect_status_name: d.statusName || "",
-      defect_type_name: d.defectTypeName || "",
+      severity_name: d.severityName || d.severity || "",
+      priority_name: d.priorityName || d.priority || "",
+      defect_status_name: d.statusName || d.status || "",
+      defect_type_name: d.defectTypeName || d.type || "",
       module_name: d.moduleName || "",
       sub_module_name: d.subModuleName || "",
       release_name: d.releaseName || "",
@@ -859,27 +910,27 @@ const formatTimeWithoutMs = (timeStr: string) => {
     defectsPerPage,
   ]);
 
-const filteredDefects = backendDefects.filter((d) => {
-  try {
-    // Handle search filtering
-    const search = filters.search.trim().toLowerCase();
-    const matchesSearch =
-      !search ||
-      (d.description && d.description.toLowerCase().includes(search)) ||
-      (d.defectId && d.defectId.toLowerCase().includes(search)) ||
-      (d.steps && d.steps.toLowerCase().includes(search));
+  const filteredDefects = backendDefects.filter((d) => {
+    try {
+      // Handle search filtering
+      const search = filters.search.trim().toLowerCase();
+      const matchesSearch =
+        !search ||
+        (d.description && d.description.toLowerCase().includes(search)) ||
+        (d.defectId && d.defectId.toLowerCase().includes(search)) ||
+        (d.steps && d.steps.toLowerCase().includes(search));
 
-    // Handle Entered By filter (client-side)
-    const matchesEnteredBy =
-      !filters.reportedBy || filters.reportedBy.length === 0 ||
-      (d.assigned_by_name && filters.reportedBy.includes(d.assigned_by_name));
+      // Handle Entered By filter (client-side)
+      const matchesEnteredBy =
+        !filters.reportedBy || filters.reportedBy.length === 0 ||
+        (d.assigned_by_name && filters.reportedBy.includes(d.assigned_by_name));
 
-    return matchesSearch && matchesEnteredBy;
-  } catch (error) {
-    console.error("Error filtering defect:", error, d);
-    return true;
-  }
-});
+      return matchesSearch && matchesEnteredBy;
+    } catch (error) {
+      console.error("Error filtering defect:", error, d);
+      return true;
+    }
+  });
 
   const fetchReleaseData = async (selectedProject: string | null) => {
     try {
@@ -904,11 +955,24 @@ const filteredDefects = backendDefects.filter((d) => {
       setNextStatusError(null);
 
       const response = await getNextStatuses(fromStatusId);
+      // Backend ApiResponse wrapper: { data: [...] }
+      // Some responses may be double-wrapped: { data: { data: [...] } }
+      // FIX 2: robustly extract the array regardless of nesting depth
+      let list: any[] = [];
+      if (Array.isArray(response?.data)) {
+        list = response.data;
+      } else if (Array.isArray(response?.data?.data)) {
+        list = response.data.data;
+      } else if (Array.isArray(response)) {
+        list = response;
+      }
 
-      const mappedStatuses = (response.data || []).map((item: any) => ({
-        id: item.toStatus.id,
-        statusName: item.toStatus.name,
-        colorCode: item.toStatus.color,
+      const mappedStatuses = list.map((item: any) => ({
+        // Backend puts the destination status in both the root fields AND toStatus sub-object.
+        // Prefer toStatus since it's the canonical next-status representation.
+        id: item.toStatus?.id ?? item.id,
+        statusName: item.toStatus?.name ?? item.statusName,
+        colorCode: item.toStatus?.color ?? item.colorCode ?? "#808080",
       }));
 
       setNextStatuses(mappedStatuses);
@@ -925,7 +989,7 @@ const filteredDefects = backendDefects.filter((d) => {
     fetchReleaseData(selectedProjectId);
   }, [selectedProjectId]);
 
-  
+
   const handleProjectSelect = (id: string) => {
     console.log("handleProjectSelect called");
     console.log("Selected ID:", id);
@@ -935,7 +999,7 @@ const filteredDefects = backendDefects.filter((d) => {
     navigate(`/projects/${id}/defects`);
   };
 
-  
+
   const getNextDefectId = () => {
     const projectDefects = defects.filter((d) => d.projectId === projectId);
     const ids = projectDefects
@@ -949,22 +1013,33 @@ const filteredDefects = backendDefects.filter((d) => {
   const defectAdd = async () => {
     // Build payload according to the API specification
 
+    // Look up the start status name to send to backend (backend reads "status" as a string name, not statusId)
+    const startStatusName = defectStatuses.find(
+      (s: any) => String(s.id) === String(workflowStartStatusId)
+    )?.statusName || "";
+
     const payload: any = {
+      projectId: selectedProjectId ? Number(selectedProjectId) : null,
+      moduleId: formData.moduleId ? Number(formData.moduleId) : null,
       description: formData.description,
       stepsToRecreation: formData.steps,
       expectedResult: "",
       actualResult: "",
       isAddTestCase: formData.testCaseRequired,
-      subModuleId: Number(formData.subModuleId),
-      severityId: Number(formData.severityId),
-      priorityId: Number(formData.priorityId),
+      subModuleId: formData.subModuleId ? Number(formData.subModuleId) : null,
+      severityId: formData.severityId ? Number(formData.severityId) : null,
+      priorityId: formData.priorityId ? Number(formData.priorityId) : null,
 
-      defectTypeId: Number(formData.typeId),
-      releaseId: Number(formData.releaseId),
+      defectTypeId: formData.typeId ? Number(formData.typeId) : null,
+      releaseId: formData.releaseId ? Number(formData.releaseId) : null,
 
       assignedTo: formData.assigntoId ? Number(formData.assigntoId) : null,
 
       testCaseId: formData.testCaseId ? Number(formData.testCaseId) : null,
+
+      // Backend reads "status" as the status name string — send it explicitly
+      // so the defect is created with the correct workflow starting status.
+      status: startStatusName,
     };
     // Remove testCaseId as it's commented out in the specification
     // testCaseId: formData.testCaseId ? Number(formData.testCaseId) : null,
@@ -1125,7 +1200,12 @@ const filteredDefects = backendDefects.filter((d) => {
         // Assignee is optional for updates - allow updates without reassigning
 
         // Use the new payload structure as per backend requirements
-        // Use selected next status if available, otherwise keep original status
+        // Use selected next status if available, otherwise keep original status.
+        // Backend reads "status" as a name string — look up name from defectStatuses.
+        const selectedStatusName = defectStatuses.find(
+          (s: any) => String(s.id) === String(formData.statusId)
+        )?.statusName || editingDefect?.defect_status_name || "";
+
         const payload = {
           description: formData.description,
           stepsToRecreation: formData.steps,
@@ -1136,6 +1216,8 @@ const filteredDefects = backendDefects.filter((d) => {
           severityId: Number(formData.severityId),
           priorityId: Number(formData.priorityId),
           statusId: Number(formData.statusId),
+          // Backend reads "status" as a name string to update the defect status
+          status: selectedStatusName,
           defectTypeId: Number(formData.typeId),
           releaseId: Number(formData.releaseId),
           assignedTo: formData.assigntoId ? Number(formData.assigntoId) : null,
@@ -1184,11 +1266,16 @@ const filteredDefects = backendDefects.filter((d) => {
             ? (response as any).data
             : response;
         console.log("UPDATE RESPONSE:", responseData);
-        if (
-          responseData?.status === "Success" ||
+        const isSuccess =
+          response?.status?.toLowerCase() === "success" ||
+          response?.statusCode === 200 ||
+          response?.statusCode === 2000 ||
+          responseData?.status?.toLowerCase() === "success" ||
           responseData?.statusCode === 200 ||
-          responseData?.statusCode === 2000
-        ) {
+          responseData?.statusCode === 2000 ||
+          Boolean(responseData?.id || responseData?.defectId);
+
+        if (isSuccess) {
           showAlert("Defect updated successfully!");
           await fetchData(); // Always re-fetch and map data after edit
           resetForm();
@@ -1333,12 +1420,21 @@ const filteredDefects = backendDefects.filter((d) => {
         ?.id?.toString() ||
       "";
 
+    // Backend's statusId @Transient is never populated via GET, so it comes back null.
+    // Resolve the statusId from the status name using the loaded defectStatuses list.
     const statusId =
       (defect as any).statusId?.toString() ||
       (defect as any).status_id?.toString() ||
       (defect as any).defectStatusId?.toString() ||
       defectStatuses
-        .find((s) => s.statusName === defect.defect_status_name)
+        .find(
+          (s: any) =>
+            s.statusName?.toLowerCase() ===
+            (defect.defect_status_name || "").toLowerCase(),
+        )
+        ?.id?.toString() ||
+      defectStatuses
+        .find((s: any) => s.statusName === defect.defect_status_name)
         ?.id?.toString() ||
       "";
 
@@ -1416,10 +1512,10 @@ const filteredDefects = backendDefects.filter((d) => {
         const list = Array.isArray(res)
           ? res
           : Array.isArray(res?.data)
-          ? res.data
-          : Array.isArray(res?.data?.data)
-          ? res.data.data
-          : [];
+            ? res.data
+            : Array.isArray(res?.data?.data)
+              ? res.data.data
+              : [];
 
         const mapped = list.map((sm: any) => ({
           id: sm.id?.toString() || sm.subModuleId?.toString(),
@@ -1450,7 +1546,8 @@ const filteredDefects = backendDefects.filter((d) => {
     setStatusError(null);
 
     try {
-      const statusData = mockDb.getStatuses();
+      const statusRes = await getAllDefectStatuses();
+      const statusData: any[] = statusRes?.data ?? statusRes?.content ?? [];
       const mappedStatuses = statusData.map((s: any) => ({
         id: s.id,
         statusName: s.name || s.statusName,
@@ -1458,10 +1555,7 @@ const filteredDefects = backendDefects.filter((d) => {
       }));
 
       setDefectStatuses(mappedStatuses);
-      if (mappedStatuses.length > 0) {
-        const defaultStatusId = mappedStatuses[0].id.toString();
-        setFormData((prev) => ({ ...prev, statusId: defaultStatusId }));
-      }
+      // Don't override form statusId here — loadWorkflowStartStatus() handles that
     } catch (error) {
       console.error("Failed to fetch statuses:", error);
       setStatusError("Failed to load statuses");
@@ -1576,6 +1670,10 @@ const filteredDefects = backendDefects.filter((d) => {
   }, [backendDefects, location.search]);
 
   const resetForm = () => {
+    // Restore the workflow start status so the Add Defect modal always
+    // pre-selects the correct starting node, even after a previous add/close.
+    const startId = workflowStartStatusId || "";
+
     setFormData({
       defectId: "",
       id: "",
@@ -1590,7 +1688,7 @@ const filteredDefects = backendDefects.filter((d) => {
       assignbyId: "",
       releaseId: "",
       attachment: "",
-      statusId: "",
+      statusId: startId,   // <-- FIX 1: restore start status instead of ""
       testCaseId: "",
       testCaseRequired: false,
     });
@@ -1799,10 +1897,10 @@ const filteredDefects = backendDefects.filter((d) => {
           const list = Array.isArray(res)
             ? res
             : Array.isArray(res?.data)
-            ? res.data
-            : Array.isArray(res?.data?.data)
-            ? res.data.data
-            : [];
+              ? res.data
+              : Array.isArray(res?.data?.data)
+                ? res.data.data
+                : [];
           if (list.length > 0) {
             setModules(
               list.map((m: any) => ({
@@ -1830,10 +1928,10 @@ const filteredDefects = backendDefects.filter((d) => {
         const list = Array.isArray(res)
           ? res
           : Array.isArray(res?.data)
-          ? res.data
-          : Array.isArray(res?.data?.data)
-          ? res.data.data
-          : [];
+            ? res.data
+            : Array.isArray(res?.data?.data)
+              ? res.data.data
+              : [];
         const mapped = list.map((sm: any) => ({
           id: sm.id?.toString() || sm.subModuleId?.toString(),
           name: sm.name || sm.subModuleName || `Submodule ${sm.id}`,
@@ -1878,10 +1976,10 @@ const filteredDefects = backendDefects.filter((d) => {
             const list = Array.isArray(res)
               ? res
               : Array.isArray(res?.data)
-              ? res.data
-              : Array.isArray(res?.data?.data)
-              ? res.data.data
-              : [];
+                ? res.data
+                : Array.isArray(res?.data?.data)
+                  ? res.data.data
+                  : [];
             return {
               moduleId: module.id,
               name: module.name,
@@ -2029,19 +2127,19 @@ const filteredDefects = backendDefects.filter((d) => {
         dataKeys: response.data ? Object.keys(response.data) : "no data",
         importStats: response.data
           ? {
-              imported:
-                response.data.imported ||
-                response.data.success ||
-                response.data.successCount,
-              failed:
-                response.data.failed ||
-                response.data.error ||
-                response.data.failedCount,
-              total: response.data.total || response.data.totalCount,
-              skipped: response.data.skipped || response.data.skippedCount,
-              warnings: response.data.warnings?.length || 0,
-              errors: response.data.errors?.length || 0,
-            }
+            imported:
+              response.data.imported ||
+              response.data.success ||
+              response.data.successCount,
+            failed:
+              response.data.failed ||
+              response.data.error ||
+              response.data.failedCount,
+            total: response.data.total || response.data.totalCount,
+            skipped: response.data.skipped || response.data.skippedCount,
+            warnings: response.data.warnings?.length || 0,
+            errors: response.data.errors?.length || 0,
+          }
           : "no stats",
         fullResponse: response,
       });
@@ -2121,18 +2219,22 @@ const filteredDefects = backendDefects.filter((d) => {
           }
           // Case 3: Some imported with skipped items
           else if (importedCount > 0 && skippedCount > 0) {
-            successMessage = `✅ Import completed! ${importedCount} defects imported successfully, ${skippedCount} defects skipped.`;
+            successMessage = `✅ Import completed! ${importedCount} defects imported/updated, ${skippedCount} duplicate defects skipped.`;
             if (response.data.skipReasons) {
               successMessage += ` Skip reasons: ${response.data.skipReasons}`;
             }
           }
-          // Case 4: Simple count without failures
+          // Case 4: All skipped (all duplicates)
+          else if (importedCount === 0 && skippedCount > 0) {
+            successMessage = `ℹ️ Duplicate: All ${skippedCount} defect(s) already exist with no changes. Nothing was imported.`;
+          }
+          // Case 5: Simple count without failures
           else if (importedCount > 0) {
             successMessage = `✅ Import completed successfully! ${importedCount} defects imported.`;
           }
-          // Case 5: Use total count if available
+          // Case 6: Use total count if available
           else if (totalCount > 0) {
-            successMessage = `✅ Import completed successfully! ${totalCount} defects imported.`;
+            successMessage = response.message || `Import completed: ${totalCount} defects processed.`;
           }
 
           // Add warnings if some rows had warnings but still imported
@@ -2166,18 +2268,18 @@ const filteredDefects = backendDefects.filter((d) => {
 
         let failureMessage = "Import failed: Unknown error";
 
-        
+
         if (response.message) {
           failureMessage = `Import failed: ${response.message}`;
           console.warn("🔔 Using backend message:", response.message);
         }
 
-        
+
         if (
           response.data &&
           failureMessage === "Import failed: Unknown error"
         ) {
-          
+
           if (
             response.data.validationErrors &&
             Array.isArray(response.data.validationErrors)
@@ -2352,14 +2454,14 @@ const filteredDefects = backendDefects.filter((d) => {
           failureMessage = `Import failed: ${response.message}`;
         }
 
-        
+
         if (
           (response.status === "Failure" ||
             response.status === "failure" ||
             response.status === "error") &&
           failureMessage === "Import failed: Unknown error"
         ) {
-          
+
           if (
             response.message?.includes("invalid file") ||
             response.message?.includes("Invalid file")
@@ -2376,12 +2478,12 @@ const filteredDefects = backendDefects.filter((d) => {
           ) {
             failureMessage = `Import failed: File size issue. ${response.message}`;
           } else {
-            
+
             failureMessage = `Import failed: ${response.message || "Unknown error"}`;
           }
         }
 
-        
+
         if (
           response.statusCode &&
           failureMessage === "Import failed: Unknown error"
@@ -2399,10 +2501,10 @@ const filteredDefects = backendDefects.filter((d) => {
             failureMessage =
               "Import failed: Data validation error. Please check your file content.";
           } else if (response.statusCode >= 500 && response.statusCode < 5000) {
-            
+
             failureMessage = `Import failed: Server error (${response.statusCode}). Please try again later.`;
           } else {
-            
+
             failureMessage =
               "Import failed: Please check your file and try again.";
           }
@@ -2414,16 +2516,16 @@ const filteredDefects = backendDefects.filter((d) => {
     } catch (error: any) {
       console.error("❌ Import error:", error);
 
-      
+
       let errorMessage = "Failed to import defects. Please try again.";
 
       if (error.response) {
-        
+
         const { status, data } = error.response;
         console.error("📡 Server error response:", { status, data });
 
         if (data) {
-          
+
           if (data.validationErrors && Array.isArray(data.validationErrors)) {
             const validationErrors = data.validationErrors
               .slice(0, 3)
@@ -2472,11 +2574,11 @@ const filteredDefects = backendDefects.filter((d) => {
                 " Please reduce the file size or split into smaller files.";
             }
           }
-          
+
           else if (data.error) {
             errorMessage = `Import failed: ${data.error}`;
           }
-          
+
           else if (data.errors && Array.isArray(data.errors)) {
             const errorCount = data.errors.length;
             const sampleErrors = data.errors.slice(0, 3).map((error: any) => {
@@ -2512,12 +2614,12 @@ const filteredDefects = backendDefects.filter((d) => {
           else if (typeof data === "string") {
             errorMessage = `Import failed: ${data}`;
           }
-          
+
           else {
             errorMessage = `Import failed: ${JSON.stringify(data)}`;
           }
         } else {
-          
+
           if (status === 400) {
             errorMessage =
               "Import failed: Bad request - Please check your file format and data.";
@@ -2531,23 +2633,23 @@ const filteredDefects = backendDefects.filter((d) => {
             errorMessage =
               "Import failed: Data validation error. Please check your file content.";
           } else if (status >= 500 && status < 5000) {
-            
+
             errorMessage = `Import failed: Server error (${status}). Please try again later.`;
           } else {
-            
+
             errorMessage = `Import failed: Please check your file and try again.`;
           }
         }
       } else if (error.request) {
-        
+
         console.error("🌐 Network error:", error.request);
         errorMessage =
           "Import failed: Network error. Please check your internet connection and try again.";
       } else if (error.message) {
-        
+
         console.error("⚠️ Unknown error:", error.message);
 
-        
+
         if (error.message.includes("timeout")) {
           errorMessage =
             "Import failed: Request timeout. The file might be too large or server is busy. Please try again.";
@@ -2561,12 +2663,12 @@ const filteredDefects = backendDefects.filter((d) => {
 
       showAlert(errorMessage);
     } finally {
-    setIsImporting(false);
+      setIsImporting(false);
 
-    if (fileInputRef.current) {
+      if (fileInputRef.current) {
         fileInputRef.current.value = "";
+      }
     }
-}
   };
   const exportDefects = async () => {
     if (!selectedProjectId) {
@@ -2576,35 +2678,69 @@ const filteredDefects = backendDefects.filter((d) => {
 
     setIsExporting(true);
     try {
-      const defectsList = mockDb.getDefects(Number(selectedProjectId));
-      const headers = ["Defect ID", "Title", "Severity", "Priority", "Status", "Module", "Assigned To"];
-      const rows = defectsList.map(d => [
-        d.defectId,
-        `"${(d.title || d.description || '').replace(/"/g, '""')}"`,
-        d.severityName || 'Medium',
-        d.priorityName || 'Medium',
-        d.statusName || d.status || 'New',
-        d.moduleName || 'Module',
-        d.assignedToName || 'Developer'
+      const defectsList = filteredDefects.length > 0 ? filteredDefects : backendDefects;
+      if (!defectsList || defectsList.length === 0) {
+        showAlert("No defects available to export for this project.");
+        return;
+      }
+
+      const headers = [
+        "Defect ID",
+        "Title / Description",
+        "Steps to Recreate",
+        "Severity",
+        "Priority",
+        "Defect Type",
+        "Status",
+        "Module",
+        "Sub Module",
+        "Assigned To",
+        "Assigned By",
+        "Release",
+      ];
+
+      const rows = defectsList.map((d) => [
+        d.projectDefectNumber ? `DEF-${d.projectDefectNumber}` : (d.defectId || `DEF-${d.id}`),
+        d.description || d.title || "",
+        d.steps || d.stepsToRecreation || "",
+        d.severity_name || d.severityName || d.severity || "Medium",
+        d.priority_name || d.priorityName || d.priority || "Medium",
+        d.defect_type_name || d.defectTypeName || d.type || "Bug",
+        d.defect_status_name || d.statusName || d.status || "New",
+        d.module_name || "",
+        d.sub_module_name || "",
+        d.assigned_to_name || "",
+        d.assigned_by_name || "",
+        d.release_name || "",
       ]);
 
-      const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `defects_project_${selectedProjectId}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const wsData = [headers, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      // Auto column widths
+      const colWidths = headers.map((header, colIndex) => {
+        let maxLen = header.length;
+        rows.forEach((row) => {
+          const val = row[colIndex] ? String(row[colIndex]) : "";
+          if (val.length > maxLen) maxLen = val.length;
+        });
+        return { wch: Math.min(Math.max(maxLen + 3, 12), 60) };
+      });
+      ws["!cols"] = colWidths;
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Defects");
+      XLSX.writeFile(wb, `defects_project_${selectedProjectId}.xlsx`);
+
       showAlert("✅ Defects exported successfully!");
     } catch (error: any) {
       console.error("Export error:", error);
-      showAlert("Failed to export defects.");
+      showAlert("Failed to export defects: " + (error?.message || error));
     } finally {
       setIsExporting(false);
     }
   };
-  
+
   const handleExportExcel = () => {
     exportDefects();
   };
@@ -2624,84 +2760,84 @@ const filteredDefects = backendDefects.filter((d) => {
       prev.map((d) =>
         d.defectId === defect.defectId
           ? {
-              ...d,
-              defect_status_name: newStatus,
-            }
+            ...d,
+            defect_status_name: newStatus,
+          }
           : d,
       ),
     );
     setEditingStatusId(null);
   };
 
-  
+
   const [userList, setUserList] = React.useState<
     { id: number; firstName: string; lastName: string }[]
   >([]);
 
-const uniqueEnteredByNames = React.useMemo(() => {
-  const names = new Set<string>();
-  backendDefects.forEach((defect) => {
-    if (defect.assigned_by_name) {
-      names.add(defect.assigned_by_name);
-    }
-  });
-  return Array.from(names).sort();
-}, [backendDefects]);
-  
-
-React.useEffect(() => {
-  setIsUsersLoading(true);
-
-  getAllUsersSimple()
-    .then((response) => {
-      console.log("Full users response:", response);
-
-      let usersArray = [];
-
-      
-      if (response?.data?.data && Array.isArray(response.data.data)) {
-        usersArray = response.data.data;
-      } else if (
-        response?.data?.content &&
-        Array.isArray(response.data.content)
-      ) {
-        usersArray = response.data.content;
-      } else if (response?.data && Array.isArray(response.data)) {
-        usersArray = response.data;
-      } else if (Array.isArray(response)) {
-        usersArray = response;
-      } else if (
-        response?.data?.data?.content &&
-        Array.isArray(response.data.data.content)
-      ) {
-        usersArray = response.data.data.content;
+  const uniqueEnteredByNames = React.useMemo(() => {
+    const names = new Set<string>();
+    backendDefects.forEach((defect) => {
+      if (defect.assigned_by_name) {
+        names.add(defect.assigned_by_name);
       }
-
-      console.log("Extracted users array:", usersArray);
-
-      if (usersArray.length > 0) {
-        const mappedUsers = usersArray
-          .map((u: any) => ({
-            id: u.id || u.userId || 0,
-            firstName: u.firstName || u.name?.split(" ")[0] || "",
-            lastName: u.lastName || u.name?.split(" ")[1] || "",
-          }))
-          .filter((u) => u.id);
-
-        console.log(`✅ Loaded ${mappedUsers.length} users`);
-        setUserList(mappedUsers);
-      } else {
-        console.warn("No users found in response:", response);
-        setUserList([]);
-      }
-      setIsUsersLoading(false);
-    })
-    .catch((error) => {
-      console.error("Failed to fetch users:", error);
-      setUserList([]);
-      setIsUsersLoading(false);
     });
-}, []);
+    return Array.from(names).sort();
+  }, [backendDefects]);
+
+
+  React.useEffect(() => {
+    setIsUsersLoading(true);
+
+    getAllUsersSimple()
+      .then((response) => {
+        console.log("Full users response:", response);
+
+        let usersArray = [];
+
+
+        if (response?.data?.data && Array.isArray(response.data.data)) {
+          usersArray = response.data.data;
+        } else if (
+          response?.data?.content &&
+          Array.isArray(response.data.content)
+        ) {
+          usersArray = response.data.content;
+        } else if (response?.data && Array.isArray(response.data)) {
+          usersArray = response.data;
+        } else if (Array.isArray(response)) {
+          usersArray = response;
+        } else if (
+          response?.data?.data?.content &&
+          Array.isArray(response.data.data.content)
+        ) {
+          usersArray = response.data.data.content;
+        }
+
+        console.log("Extracted users array:", usersArray);
+
+        if (usersArray.length > 0) {
+          const mappedUsers = usersArray
+            .map((u: any) => ({
+              id: u.id || u.userId || 0,
+              firstName: u.firstName || u.name?.split(" ")[0] || "",
+              lastName: u.lastName || u.name?.split(" ")[1] || "",
+            }))
+            .filter((u) => u.id);
+
+          console.log(`✅ Loaded ${mappedUsers.length} users`);
+          setUserList(mappedUsers);
+        } else {
+          console.warn("No users found in response:", response);
+          setUserList([]);
+        }
+        setIsUsersLoading(false);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch users:", error);
+        setUserList([]);
+        setIsUsersLoading(false);
+      });
+  }, []);
 
   // Compute releases for the selected project, with mock fallback
   let projectReleases = selectedProjectId
@@ -2827,38 +2963,38 @@ React.useEffect(() => {
           ? `${user.firstName} ${user.lastName}`
           : user?.userName || user?.name || `User ${user?.id}`;
 
-      
+
       const commentText = newCommentText;
 
-      
+
       const userId = user?.userId || user?.id;
 
-    
-    setEditingCommentId(null);
-    setEditingCommentText("");
 
-    // Optimistically update UI
-    setCommentsByDefectId((prev) => {
-      const prevComments = prev[activeCommentsDefectId] || [];
-      return {
+      setEditingCommentId(null);
+      setEditingCommentText("");
+
+      // Optimistically update UI
+      setCommentsByDefectId((prev) => {
+        const prevComments = prev[activeCommentsDefectId] || [];
+        return {
+          ...prev,
+          [activeCommentsDefectId]: [
+            ...prevComments,
+            {
+              text: commentText,
+              timestamp: new Date().toISOString(),
+              userId: userId,
+              createdByName: userName,
+            },
+          ],
+        };
+      });
+
+      // ✅ Update comment count in the comments state
+      setCommentsCountByDefectId((prev) => ({
         ...prev,
-        [activeCommentsDefectId]: [
-          ...prevComments,
-          {
-            text: commentText,
-            timestamp: new Date().toISOString(),
-            userId: userId,
-            createdByName: userName,
-          },
-        ],
-      };
-    });
-    
-    // ✅ Update comment count in the comments state
-    setCommentsCountByDefectId((prev) => ({
-      ...prev,
-      [activeCommentsDefectId]: (prev[activeCommentsDefectId] || 0) + 1,
-    }));
+        [activeCommentsDefectId]: (prev[activeCommentsDefectId] || 0) + 1,
+      }));
 
       // ✅ ALSO update the defect's comment count in backendDefects
       setBackendDefects((prev) =>
@@ -2887,20 +3023,20 @@ React.useEffect(() => {
           comment: commentText,
         });
 
-      // Refresh comments
-      const response = await getCommentsByDefectId(defect.id);
-      const newComments = (response.data || []).map((c: any) => ({
-        id: c.id || c.commentId || c._id,
-        text: c.comment,
-        timestamp: c.createdAt || new Date().toISOString(),
-        userId: c.createdBy,
-        createdByName: c.createdByName || c.userName || `User ${c.createdBy}`,
-      }));
+        // Refresh comments
+        const response = await getCommentsByDefectId(defect.id);
+        const newComments = (response.data || []).map((c: any) => ({
+          id: c.id || c.commentId || c._id,
+          text: c.comment,
+          timestamp: c.createdAt || new Date().toISOString(),
+          userId: c.createdBy,
+          createdByName: c.createdByName || c.userName || `User ${c.createdBy}`,
+        }));
 
-      setCommentsByDefectId((prev) => ({
-        ...prev,
-        [activeCommentsDefectId]: newComments,
-      }));
+        setCommentsByDefectId((prev) => ({
+          ...prev,
+          [activeCommentsDefectId]: newComments,
+        }));
 
         // ✅ Update comment count with actual count from server
         const actualCount = newComments.length;
@@ -2928,7 +3064,7 @@ React.useEffect(() => {
         console.error("Comment creation error:", error);
         showAlert(error.message || "Failed to add comment");
 
-        
+
         setCommentsByDefectId((prev) => {
           const prevComments = prev[activeCommentsDefectId] || [];
           return {
@@ -2937,7 +3073,7 @@ React.useEffect(() => {
           };
         });
 
-        
+
         setCommentsCountByDefectId((prev) => ({
           ...prev,
           [activeCommentsDefectId]: Math.max(
@@ -2946,7 +3082,7 @@ React.useEffect(() => {
           ),
         }));
 
-        
+
         setBackendDefects((prev) =>
           prev.map((d) =>
             d.defectId === activeCommentsDefectId
@@ -2965,24 +3101,24 @@ React.useEffect(() => {
     }
   };
 
-  
+
 
   const totalPages = isServerPaginated
     ? totalPagesFromServer
     : (Math.ceil(filteredDefects.length / defectsPerPage) || 1);
   const [pageInput, setPageInput] = useState("1");
 
-  
+
   useEffect(() => {
     setPageInput(String(currentPage));
   }, [currentPage]);
 
-  
+
   useEffect(() => {
     setCurrentPage(1);
   }, [filters, selectedProjectId, defectsPerPage]);
 
-  
+
   useEffect(() => {
     if (selectedProjectId) {
       setFilters({
@@ -3006,11 +3142,11 @@ React.useEffect(() => {
   const paginatedDefects = isServerPaginated
     ? filteredDefects
     : filteredDefects.slice(
-        (currentPage - 1) * defectsPerPage,
-        currentPage * defectsPerPage,
-      );
+      (currentPage - 1) * defectsPerPage,
+      currentPage * defectsPerPage,
+    );
 
-// Fetch allocated developers for the project / selected submodule
+  // Fetch allocated developers for the project / selected submodule
   useEffect(() => {
     if (!selectedProjectId) {
       setAllocatedUsers([]);
@@ -3109,7 +3245,7 @@ React.useEffect(() => {
         const dynamicSummary: any = {};
 
         if (apiData?.data) {
-          
+
           dynamicSummary.Remark = apiData.data.totalRemark || 0;
           dynamicSummary.TotalDefect = apiData.data.totalDefects || 0;
 
@@ -3173,7 +3309,7 @@ React.useEffect(() => {
   }, [selectedProjectId]);
   console.log("defectSeveritySummary", defectSeveritySummary);
   const { user } = useAuth();
-  
+
 
   const [commentsCountByDefectId, setCommentsCountByDefectId] = useState<
     Record<string, number>
@@ -3188,67 +3324,67 @@ React.useEffect(() => {
 
   return (
     <>
-    {isImporting && (
-  <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-    <div className="w-[380px] rounded-2xl bg-white p-8 shadow-2xl">
+      {isImporting && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="w-[380px] rounded-2xl bg-white p-8 shadow-2xl">
 
-      <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center">
 
-        <OrbitProgress
-          color="#2563eb"
-          size="medium"
-          text=""
-          textColor=""
-        />
+              <OrbitProgress
+                color="#2563eb"
+                size="medium"
+                text=""
+                textColor=""
+              />
 
-        <h2 className="mt-6 text-2xl font-bold text-gray-800">
-          Importing Defects
-        </h2>
+              <h2 className="mt-6 text-2xl font-bold text-gray-800">
+                Importing Defects
+              </h2>
 
-        <p className="mt-2 text-center text-gray-500">
-          Please wait while the Excel file is being imported...
-        </p>
+              <p className="mt-2 text-center text-gray-500">
+                Please wait while the Excel file is being imported...
+              </p>
 
 
-        <div className="mt-6 w-full rounded-full bg-gray-200 h-2 overflow-hidden">
-          <div className="h-full w-full bg-blue-600 animate-pulse rounded-full"></div>
-        </div>
+              <div className="mt-6 w-full rounded-full bg-gray-200 h-2 overflow-hidden">
+                <div className="h-full w-full bg-blue-600 animate-pulse rounded-full"></div>
+              </div>
 
-        <p className="mt-4 text-sm text-gray-400">
-          This may take a few seconds.
-        </p>
+              <p className="mt-4 text-sm text-gray-400">
+                This may take a few seconds.
+              </p>
 
-      </div>
-
-    </div>
-  </div>
-)}
-    {isExporting && (
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-        <div className="w-[380px] rounded-2xl bg-white p-8 shadow-2xl">
-          <div className="flex flex-col items-center">
-            <OrbitProgress
-              color="#2563eb"
-              size="medium"
-              text=""
-              textColor=""
-            />
-            <h2 className="mt-6 text-2xl font-bold text-gray-800">
-              Exporting Defects
-            </h2>
-            <p className="mt-2 text-center text-gray-500">
-              Please wait while we prepare and download your Excel sheet...
-            </p>
-            <div className="mt-6 w-full rounded-full bg-gray-200 h-2 overflow-hidden">
-              <div className="h-full w-full bg-blue-600 animate-pulse rounded-full"></div>
             </div>
-            <p className="mt-4 text-sm text-gray-400">
-              This may take a few seconds.
-            </p>
+
           </div>
         </div>
-      </div>
-    )}
+      )}
+      {isExporting && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="w-[380px] rounded-2xl bg-white p-8 shadow-2xl">
+            <div className="flex flex-col items-center">
+              <OrbitProgress
+                color="#2563eb"
+                size="medium"
+                text=""
+                textColor=""
+              />
+              <h2 className="mt-6 text-2xl font-bold text-gray-800">
+                Exporting Defects
+              </h2>
+              <p className="mt-2 text-center text-gray-500">
+                Please wait while we prepare and download your Excel sheet...
+              </p>
+              <div className="mt-6 w-full rounded-full bg-gray-200 h-2 overflow-hidden">
+                <div className="h-full w-full bg-blue-600 animate-pulse rounded-full"></div>
+              </div>
+              <p className="mt-4 text-sm text-gray-400">
+                This may take a few seconds.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <style>
         {`
           .scrollbar-hide::-webkit-scrollbar {
@@ -3257,13 +3393,13 @@ React.useEffect(() => {
         `}
       </style>
       <div className="max-w-6xl mx-auto">
-        {}
+        { }
         <ProjectSelector
           projects={projects}
           selectedProjectId={selectedProjectId}
           onSelect={handleProjectSelect}
         />
-       {showReassign ? (
+        {showReassign ? (
           <div className="mt-4">
             <ReassignDefects
               defects={backendDefects}
@@ -3278,1018 +3414,1017 @@ React.useEffect(() => {
           </div>
         ) : (
           // Normal Defects View - Show everything else
-        <>
+          <>
 
-        {/* Defect Severity Breakdown */}
-        <div className="mb-8 mt-4">
-          <div className="flex items-center mb-3 gap-4">
-            <h2 className="text-lg font-semibold text-gray-700">
-              Defect Severity Breakdown
-            </h2>
-            {/* Show total remark and total defect from backend summary */}
-            {defectSeveritySummary && (
-              <div className="flex items-center gap-3">
-                <span
-                  className="text-base font-bold text-blue-500 border border-blue-400 rounded-lg px-3 py-1 bg-blue-50 shadow-sm"
-                  style={{ boxShadow: "0 1px 4px 0 rgba(59,130,246,0.07)" }}
-                >
-                  Total Remark : {defectSeveritySummary.Remark || 0}
-                </span>
-                <span
-                  className="text-base font-bold text-red-500 border border-red-400 rounded-lg px-3 py-1 bg-red-50 shadow-sm"
-                  style={{ boxShadow: "0 1px 4px 0 rgba(239,68,68,0.07)" }}
-                >
-                  Total Defect : {defectSeveritySummary.TotalDefect || 0}
-                </span>
+            {/* Defect Severity Breakdown */}
+            <div className="mb-8 mt-4">
+              <div className="flex items-center mb-3 gap-4">
+                <h2 className="text-lg font-semibold text-gray-700">
+                  Defect Severity Breakdown
+                </h2>
+                {/* Show total remark and total defect from backend summary */}
+                {defectSeveritySummary && (
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="text-base font-bold text-blue-500 border border-blue-400 rounded-lg px-3 py-1 bg-blue-50 shadow-sm"
+                      style={{ boxShadow: "0 1px 4px 0 rgba(59,130,246,0.07)" }}
+                    >
+                      Total Remark : {defectSeveritySummary.Remark || 0}
+                    </span>
+                    <span
+                      className="text-base font-bold text-red-500 border border-red-400 rounded-lg px-3 py-1 bg-red-50 shadow-sm"
+                      style={{ boxShadow: "0 1px 4px 0 rgba(239,68,68,0.07)" }}
+                    >
+                      Total Defect : {defectSeveritySummary.TotalDefect || 0}
+                    </span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {(loadingSeveritySummary || isStatusLoading) && (
-            <div className="text-gray-500 p-4">Loading...</div>
-          )}
-          {(severitySummaryError || statusError) && (
-            <div className="text-red-500 p-4">
-              {severitySummaryError || statusError}
-            </div>
-          )}
-          {!loadingSeveritySummary &&
-            !isStatusLoading &&
-            !severitySummaryError &&
-            !statusError &&
-            defectSeveritySummary &&
-            defectStatuses.length > 0 && (
-              <div className="relative flex items-center">
-                <button
-                  onClick={() => {
-                    const container = document.getElementById(
-                      "defects-severity-scroll",
-                    );
-                    if (container) container.scrollLeft -= 300;
-                  }}
-                  className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 mr-2"
-                  type="button"
-                >
-                  <ChevronLeft className="w-5 h-5 text-gray-600" />
-                </button>
-                <div
-                  id="defects-severity-scroll"
-                  className="flex space-x-6 overflow-x-auto pb-2 scroll-smooth flex-1 scrollbar-hide"
-                  style={{
-                    scrollbarWidth: "none",
-                    msOverflowStyle: "none",
-                    maxWidth: "100%",
-                  }}
-                >
-                  {(() => {
-                    const severityKeys = Object.keys(
-                      defectSeveritySummary,
-                    ).filter((key) => {
-                      const v = defectSeveritySummary[key];
-                      return v && typeof v === "object" && "statusCounts" in v;
-                    });
-                    const severityOrder: Record<string, number> = {
-                      critical: 3,
-                      high: 2,
-                      medium: 1,
-                      low: 0,
-                    };
-                    severityKeys.sort(
-                      (a, b) =>
-                        (severityOrder[b] ?? -1) - (severityOrder[a] ?? -1),
-                    );
-                    return severityKeys.map((severity) => {
-                      const severityLabel = `Defects on ${severity.charAt(0).toUpperCase() + severity.slice(1)}`;
-                      const severityData = severities.find(
-                        (s) => s.name.toLowerCase() === severity,
-                      );
-                      const severityColor = severityData?.color || "#6B7280";
-                      const hexColor = severityColor.startsWith("#")
-                        ? severityColor
-                        : `#${severityColor}`;
-
-                      const statusList = defectStatuses.map((s) =>
-                        s.statusName.toLowerCase(),
-                      );
-                      const statusColorMap: Record<string, string> =
-                        Object.fromEntries(
-                          defectStatuses.map((s) => [
-                            s.statusName.toLowerCase(),
-                            s.colorCode,
-                          ]),
+              {(loadingSeveritySummary || isStatusLoading) && (
+                <div className="text-gray-500 p-4">Loading...</div>
+              )}
+              {(severitySummaryError || statusError) && (
+                <div className="text-red-500 p-4">
+                  {severitySummaryError || statusError}
+                </div>
+              )}
+              {!loadingSeveritySummary &&
+                !isStatusLoading &&
+                !severitySummaryError &&
+                !statusError &&
+                defectSeveritySummary &&
+                defectStatuses.length > 0 && (
+                  <div className="relative flex items-center">
+                    <button
+                      onClick={() => {
+                        const container = document.getElementById(
+                          "defects-severity-scroll",
                         );
-                      const summary = defectSeveritySummary[severity] || {
-                        statusCounts: {},
-                        total: 0,
-                      };
-                      const statusCounts = statusList.map(
-                        (status) => summary.statusCounts?.[status] || 0,
-                      );
-                      const half = Math.ceil(statusList.length / 2);
-                      const leftStatuses = statusList.slice(0, half);
-                      const rightStatuses = statusList.slice(half);
-                      return (
-                        <div
-                          key={severity}
-                          className={`bg-white rounded-xl shadow flex flex-col justify-between min-h-[200px] min-w-[300px] border border-gray-200 border-l-8`}
-                          style={{ borderLeftColor: hexColor }}
-                        >
-                          <div className="px-6 pt-4 pb-1">
-                            <div className="flex items-center justify-between mb-2">
-                              <span
-                                className="font-semibold text-base"
-                                style={{ color: hexColor }}
-                              >
-                                {severityLabel}
-                              </span>
-                              <span className="font-semibold text-gray-600 text-base"></span>
-                            </div>
-                            {/* Removed Total Remark count from severity box, only show Total Defect for this severity */}
-                            <div className="flex items-center gap-3 mb-1">
-                              <span className="text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-                                Total Defect: {summary.validDefects || 0}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex flex-row gap-8 px-6 pb-1">
-                            <div className="flex flex-col gap-1">
-                              {leftStatuses.map((status, idx) => (
-                                <div
-                                  key={status}
-                                  className="flex items-center gap-2 text-xs"
-                                >
-                                  <span
-                                    className="inline-block w-2.5 h-2.5 rounded-full"
-                                    style={{
-                                      backgroundColor: statusColorMap[status],
-                                    }}
-                                  ></span>
-                                  <span className="text-gray-700 font-normal">
-                                    {defectStatuses[idx].statusName}
-                                  </span>
-                                  <span className="text-gray-700 font-medium">
-                                    {statusCounts[idx]}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              {rightStatuses.map((status, idx) => (
-                                <div
-                                  key={status}
-                                  className="flex items-center gap-2 text-xs"
-                                >
-                                  <span
-                                    className="inline-block w-2.5 h-2.5 rounded-full"
-                                    style={{
-                                      backgroundColor: statusColorMap[status],
-                                    }}
-                                  ></span>
-                                  <span className="text-gray-700 font-normal">
-                                    {defectStatuses[half + idx]?.statusName}
-                                  </span>
-                                  <span className="text-gray-700 font-medium">
-                                    {statusCounts[half + idx]}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="px-6 pb-3">
-                            <button
-                              className="mt-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-md font-medium text-xs border border-blue-100 hover:bg-blue-100 transition"
-                              onClick={() =>
-                                setPieModal({ open: true, severity })
-                              }
-                            >
-                              View Chart
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-                <button
-                  onClick={() => {
-                    const container = document.getElementById(
-                      "defects-severity-scroll",
-                    );
-                    if (container) container.scrollLeft += 300;
-                  }}
-                  className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 ml-2"
-                  type="button"
-                >
-                  <ChevronRight className="w-5 h-5 text-gray-600" />
-                </button>
-              </div>
-            )}
-
-          {/* Pie Chart Modal for Defect Severity Breakdown */}
-          {pieModal.open &&
-            pieModal.severity &&
-            (() => {
-              const severity = pieModal.severity;
-              const statusList = defectStatuses.map((s) =>
-                (s.statusName || "").toLowerCase(),
-              );
-              const statusColorMap = Object.fromEntries(
-                defectStatuses.map((s) => [
-                  (s.statusName || "").toLowerCase(),
-                  s.colorCode,
-                ]),
-              );
-              const summary = defectSeveritySummary[severity] || {
-                statusCounts: {},
-                total: 0,
-              };
-              const statusCounts = statusList.map(
-                (status) => summary.statusCounts?.[status] || 0,
-              );
-              const pieData = {
-                labels: statusList.map((s) => s.toUpperCase()),
-                datasets: [
-                  {
-                    data: statusCounts,
-                    backgroundColor: statusList.map(
-                      (s) => statusColorMap[s] || "#ccc",
-                    ),
-                  },
-                ],
-              };
-              return (
-                <Modal
-                  isOpen={pieModal.open}
-                  onClose={() => setPieModal({ open: false, severity: null })}
-                  title={`Status Breakdown for ${severity.charAt(0).toUpperCase() + severity.slice(1)}`}
-                >
-                  <div className="flex flex-col items-center justify-center p-4">
-                    <div className="w-64 h-64">
-                      <ChartJSPie
-                        data={pieData}
-                        options={{
-                          plugins: {
-                            legend: { display: true, position: "bottom" },
-                          },
-                        }}
-                      />
-                    </div>
-                  </div>
-                </Modal>
-              );
-            })()}
-        </div>
-
-        {/* Header Row with Import/Export/Add Defect Buttons */}
-        {/* Header Row with Import/Export/Add Defect Buttons */}
-        <div className="flex justify-between items-center m-4">
-          <h1 className="text-2xl font-bold text-gray-900">Defects</h1>
-          <div className="flex gap-2 items-center">
-            {/* Reassign Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setShowReassign(!showReassign)}
-              className={`flex items-center px-3 py-2 rounded shadow transition-colors ${
-                showReassign
-                  ? 'bg-purple-600 hover:bg-purple-700 text-white'
-                  : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
-              }`}
-            >
-              <svg
-                className="w-4 h-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-                />
-              </svg>
-              {showReassign ? 'Hide Reassign' : 'Reassign Defects'}
-            </button>
-
-            {can.defect.create && (
-              <button
-                type="button"
-                className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg
-                  className="w-4 h-4 mr-2"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-                  />
-                </svg>
-                Import from Excel
-              </button>
-            )}
-            <input
-              type="file"
-              accept=".xlsx,.csv"
-              onChange={handleImportExcel}
-              ref={fileInputRef}
-              className="hidden"
-            />
-            <button
-              type="button"
-              className="flex items-center px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded shadow"
-              onClick={handleExportExcel}
-            >
-              <svg
-                className="w-4 h-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12V4m0 0l-4 4m4-4l4 4"
-                />
-              </svg>
-              Export to Excel
-            </button>
-            {can.defect.create && (
-              <Button onClick={() => setIsModalOpen(true)} icon={Plus}>
-                Add Defect
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Defect Table in a single frame with search/filter in one line */}
-        <Card>
-          <CardContent className="p-0">
-            {/* Results Summary */}
-            {(filteredDefects.length > 0 ||
-              backendDefects.length > 0 ||
-              isLoading) && (
-              <div className="p-3 mx-4 mt-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-blue-700">
-                    {isLoading ? (
-                      <span className="font-medium flex items-center">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-700 mr-2"></div>
-                        Loading Remarks...
-                      </span>
-                    ) : (
-                      <span className="font-medium">
-                        {totalCount} remark
-                        {totalCount !== 1 ? "s" : ""} found
-                      </span>
-                    )}
-                  </div>
-                  {!isLoading && !isServerPaginated &&
-                    filteredDefects.length !== backendDefects.length && (
-                      <div className="text-xs text-blue-600 font-medium">
-                        {backendDefects.length} total defects in project
-                      </div>
-                    )}
-                </div>
-              </div>
-            )}
-
-            {!isLoading ? <div className="overflow-x-auto mt-4">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200 whitespace-nowrap">
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 z-20 bg-gray-50 border-r border-gray-100"
-                      style={{ minWidth: 120, maxWidth: 120 }}
-                    >
-                      Defect ID
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[120px] z-20 bg-gray-50 border-r border-gray-100"
-                      style={{ minWidth: 220, maxWidth: 220 }}
-                    >
-                      Brief Description
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[340px] z-20 bg-gray-50 border-r border-gray-100"
-                      style={{ minWidth: 100, maxWidth: 100 }}
-                    >
-                      Steps
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[440px] z-20 bg-gray-50 border-r border-gray-100"
-                      style={{ minWidth: 120, maxWidth: 120 }}
-                    >
-                      Attachment
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Module
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Submodule
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Type
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Severity
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Priority
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      History
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Assigned To
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Entered By
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Release
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-         <tr className="bg-gray-50 border-b border-gray-200">
-
-  <th
-    colSpan={4}
-    className="px-2 py-2 sticky left-0 z-20 bg-gray-50 border-r border-gray-200"
-    style={{ minWidth: 560, maxWidth: 560 }}
-  >
-    <input
-      type="text"
-      placeholder="Search ID / Description..."
-      value={filters.search}
-      onChange={(e) =>
-        setFilters((f) => ({ ...f, search: e.target.value }))
-      }
-      className="w-full px-2 py-3 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-normal"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 140 }}>
-    <SearchableMultiSelect
-      options={modules.map((m) => ({
-        value: m.name,
-        label: m.name,
-      }))}
-      selectedValues={filters.module}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, module: values, subModule: [] }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 140 }}>
-    <SearchableMultiSelect
-      options={filterSubmodules.map((sm) => ({
-        value: sm.name,
-        label: sm.name,
-      }))}
-      selectedValues={filters.subModule}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, subModule: values }))
-      }
-      placeholder={
-        !filters.module.length
-          ? "Select module"
-          : filterSubmodules.length === 0
-          ? "None"
-          : "All"
-      }
-      className="text-xs"
-      disabled={!filters.module.length}
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 120 }}>
-    <SearchableMultiSelect
-      options={defectTypes.map((t) => ({
-        value: t.name,
-        label: t.name,
-      }))}
-      selectedValues={filters.type}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, type: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 120 }}>
-    <SearchableMultiSelect
-      options={severities.map((s) => ({
-        value: s.name,
-        label: s.name,
-      }))}
-      selectedValues={filters.severity}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, severity: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 120 }}>
-    <SearchableMultiSelect
-      options={priorities.map((p) => ({
-        value: p.name,
-        label: p.name,
-      }))}
-      selectedValues={filters.name}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, name: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 120 }}>
-    <SearchableMultiSelect
-      options={
-        isStatusLoading
-          ? []
-          : statusError
-          ? []
-          : defectStatuses.map((s) => ({
-              value: s.statusName,
-              label: s.statusName,
-            }))
-      }
-      selectedValues={filters.status}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, status: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-      disabled={isStatusLoading || !!statusError}
-    />
-  </th>
-
-  <th className="px-2 py-2"></th>
-
-  <th className="px-2 py-2" style={{ minWidth: 140 }}>
-    <SearchableMultiSelect
-      options={projectDevelopers
-        .filter(
-          (dev, index, self) =>
-            self.findIndex((d) => d.id === dev.id) === index
-        )
-        .map((dev) => ({
-          value: dev.id.toString(),
-          label: dev.role ? `${dev.name} (${dev.role})` : dev.name,
-        }))}
-      selectedValues={filters.assignedTo}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, assignedTo: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 140 }}>
-    <SearchableMultiSelect
-      options={uniqueEnteredByNames.map((name) => ({
-        value: name,
-        label: name,
-      }))}
-      selectedValues={filters.reportedBy}
-      onChange={(values) =>
-        setFilters((prev) => ({
-          ...prev,
-          reportedBy: values,
-        }))
-      }
-      placeholder={
-        uniqueEnteredByNames.length === 0 ? "None" : "All"
-      }
-      className="text-xs"
-      disabled={uniqueEnteredByNames.length === 0}
-    />
-  </th>
-
-  <th className="px-2 py-2" style={{ minWidth: 140 }}>
-    <SearchableMultiSelect
-      options={releaseOptions}
-      selectedValues={filters.releaseId}
-      onChange={(values) =>
-        setFilters((f) => ({ ...f, releaseId: values }))
-      }
-      placeholder="All"
-      className="text-xs"
-    />
-  </th>
-
-  <th className="px-2 py-2">
-    <button
-      type="button"
-      onClick={() =>
-        setFilters({
-          id: "",
-          module: [],
-          subModule: [],
-          type: [],
-          severity: [],
-          name: [],
-          status: [],
-          releaseId: [],
-          assignedTo: [],
-          reportedBy: [],
-          search: "",
-        })
-      }
-      className="text-ms px-2 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors font-medium w-full text-center"
-    >
-      Clear
-    </button>
-  </th>
-</tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {filteredDefects.length > 0 ? (
-                    paginatedDefects.map((defect) => (
-                      <tr
-                        key={defect.defectId}
-                        ref={
-                          highlightId === defect.defectId
-                            ? highlightedRowRef
-                            : undefined
-                        }
-                        className={`border-b border-gray-200 hover:bg-gray-50 ${highlightId === defect.defectId ? "border-2 border-blue-500" : ""}`}
-                      >
-                        <td
-                          className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 sticky left-0 z-10 bg-white border-r border-gray-200"
-                          style={{ minWidth: 120 }}
-                        >
-                          {defect.defectId}
-                        </td>
-                        <td
-                          className="px-6 py-4 text-sm text-gray-900 sticky left-[120px] z-10 bg-white border-r border-gray-200"
-                          style={{ minWidth: 220, maxWidth: 220 }}
-                        >
-                          <div
-                            className="break-words overflow-hidden"
-                            style={{
-                              display: "-webkit-box",
-                              WebkitLineClamp: 3,
-                              WebkitBoxOrient: "vertical",
-                              lineHeight: "1.4",
-                              maxHeight: "4.2em",
-                            }}
-                            title={defect.description} 
-                          >
-                            {defect.description}
-                          </div>
-                        </td>
-                        <td
-                          className="px-6 py-4 text-sm text-blue-600 cursor-pointer sticky left-[340px] z-10 bg-white border-r border-gray-200"
-                          style={{ minWidth: 100, maxWidth: 100 }}
-                        >
-                          <button
-                            type="button"
-                            className="flex items-center space-x-1 hover:underline"
-                            onClick={() => {
-                              setViewingSteps(defect.steps);
-                              setIsViewStepsModalOpen(true);
-                            }}
-                            title="View Steps"
-                          >
-                            <Eye className="w-4 h-4 mr-1" />
-                            <span>View</span>
-                          </button>
-                        </td>
-                        <td
-                          className="px-6 py-4 text-sm text-gray-900 sticky left-[440px] z-10 bg-white border-r border-gray-200"
-                          style={{ minWidth: 120, maxWidth: 120 }}
-                        >
-                          {defect.attachment ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleViewAttachment(defect.attachment)
-                              }
-                              className="text-blue-600 hover:text-blue-800 underline bg-transparent border-none cursor-pointer"
-                            >
-                              View Attachment
-                            </button>
-                          ) : (
-                            <span className="text-gray-400">No attachment</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {defect.module_name}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {defect.sub_module_name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {defect.defect_type_name || defect.defectTypeName}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {renderColoredSpan(
-                            defect.severity_name,
-                            getSeverityColor(defect.severity_name),
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {renderColoredSpan(
-                            defect.priority_name,
-                            getPriorityColor(defect.priority_name),
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap w-32">
-                          <div className="flex flex-col items-center gap-1">
-                            {renderColoredSpan(
-                              defect.defect_status_name,
-                              getStatusColor(defect.defect_status_name),
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
-                          <button
-                            type="button"
-                            className="text-blue-600 hover:text-blue-900 p-1"
-                            title="View defect history"
-                            onClick={() =>
-                              handleOpenDefectHistory(defect.defectId)
-                            }
-                            disabled={!can.defect.history}
-                          >
-                            <History className="h-5 w-5 inline" />
-                          </button>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {defect.assigned_to_name || "-"}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {defect.assigned_by_name || "-"}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {(defect as any).release_name?.toString() ||
-                            releaseMap[(defect as any).releaseId || ""] ||
-                            "-"}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              className="text-blue-600 hover:text-blue-900 flex items-center"
-                              title="View Defect Details"
-                              onClick={() => {
-                                setViewingDefectDetails({
-                                  defectId: defect.defectId,
-                                  description: defect.description,
-                                  steps: defect.steps,
-                                  module: defect.module_name,
-                                  submodule: defect.sub_module_name,
-                                  type: defect.defect_type_name,
-                                  severity: defect.severity_name,
-                                  name: defect.priority_name,
-                                  status: defect.defect_status_name,
-                                  assignedTo: defect.assigned_to_name,
-                                  enteredBy: defect.assigned_by_name,
-                                  release:
-                                    (defect as any).release_name?.toString() ||
-                                    releaseMap[
-                                      (defect as any).releaseId || ""
-                                    ] ||
-                                    "-",
-                                  attachment: defect.attachment,
-                                });
-                                setIsViewDefectDetailsModalOpen(true);
-                                navigate(
-                                  `/projects/${selectedProjectId}/defects?view=${defect.id}`,
-                                  { replace: true },
-                                );
-                              }}
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              className="text-green-600 hover:text-green-900 flex items-center"
-                              title="Edit Defect"
-                              onClick={() => handleEdit(defect)}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            {can.defect.delete && (
-                              <button
-                                type="button"
-                                className="text-red-600 hover:text-red-900 flex items-center"
-                                title="Delete Defect"
-                                onClick={() => handleDelete(defect.defectId)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                            {can.defectComment.view && (
-                              <button
-                                type="button"
-                                className="relative text-blue-600 hover:text-blue-800 flex items-center"
-                                title="Comments"
-                                onClick={() =>
-                                  handleOpenCommentsModal(defect.defectId)
-                                }
-                              >
-                                <MessageSquare className="w-5 h-5" />
-                                {defect.commentsCount > 0 && (
-                                  <span className="ml-1 text-xs text-gray-500">
-                                    {defect.commentsCount}
-                                  </span>
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td
-                        colSpan={10}
-                        className="p-12 text-center text-gray-500"
-                      >
-                        <CheckCircle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                        <div className="text-lg font-medium text-gray-900 mb-2">
-                          No defects found
-                        </div>
-                        <div className="text-gray-500 mb-4">
-                          No defects have been reported for this project
-                        </div>
-                        {can.defect.create && (
-                          <Button
-                            onClick={() => setIsModalOpen(true)}
-                            icon={Plus}
-                          >
-                            Add Defect
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div> :<div className="flex justify-center items-center py-20">
-              <OrbitProgress
-                  variant="dotted"
-                  color="#3B82F6"
-                  size="medium"
-                  text=""
-                  textColor=""
-              />
-            </div>}
-            {/* Pagination Controls */}
-            <div
-              className="sticky bottom-0 left-0 w-full bg-white border-t z-10"
-              style={{ boxShadow: "0 -2px 8px rgba(0,0,0,0.04)" }}
-            >
-              <div className="flex items-center justify-between px-4 py-4">
-                {}
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-700">Rows per page:</span>
-                    <select
-                      value={defectsPerPage}
-                      onChange={(e) => {
-                        setDefectsPerPage(Number(e.target.value));
-                        setCurrentPage(1); 
+                        if (container) container.scrollLeft -= 300;
                       }}
-                      className="border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                      className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 mr-2"
+                      type="button"
                     >
-                      <option value={5}>5</option>
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
-                    </select>
-                  </div>
-                  <span className="text-sm text-gray-500">
-                    Showing {startItem}–{endItem} of {totalCount} defects
-                  </span>
-                </div>
+                      <ChevronLeft className="w-5 h-5 text-gray-600" />
+                    </button>
+                    <div
+                      id="defects-severity-scroll"
+                      className="flex space-x-6 overflow-x-auto pb-2 scroll-smooth flex-1 scrollbar-hide"
+                      style={{
+                        scrollbarWidth: "none",
+                        msOverflowStyle: "none",
+                        maxWidth: "100%",
+                      }}
+                    >
+                      {(() => {
+                        const severityKeys = Object.keys(
+                          defectSeveritySummary,
+                        ).filter((key) => {
+                          const v = defectSeveritySummary[key];
+                          return v && typeof v === "object" && "statusCounts" in v;
+                        });
+                        const severityOrder: Record<string, number> = {
+                          critical: 3,
+                          high: 2,
+                          medium: 1,
+                          low: 0,
+                        };
+                        severityKeys.sort(
+                          (a, b) =>
+                            (severityOrder[b] ?? -1) - (severityOrder[a] ?? -1),
+                        );
+                        return severityKeys.map((severity) => {
+                          const severityLabel = `Defects on ${severity.charAt(0).toUpperCase() + severity.slice(1)}`;
+                          const severityData = severities.find(
+                            (s) => s.name.toLowerCase() === severity,
+                          );
+                          const severityColor = severityData?.color || "#6B7280";
+                          const hexColor = severityColor.startsWith("#")
+                            ? severityColor
+                            : `#${severityColor}`;
 
-                {}
-                {totalPages > 1 && (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </Button>
-                    {}
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                      (pageNum) => {
-                        
-                        const isCurrent = pageNum === currentPage;
-                        const isEdge = pageNum === 1 || pageNum === totalPages;
-                        const isNear = Math.abs(pageNum - currentPage) <= 1;
-                        if (isEdge || isNear) {
+                          const statusList = defectStatuses.map((s) =>
+                            s.statusName.toLowerCase(),
+                          );
+                          const statusColorMap: Record<string, string> =
+                            Object.fromEntries(
+                              defectStatuses.map((s) => [
+                                s.statusName.toLowerCase(),
+                                s.colorCode,
+                              ]),
+                            );
+                          const summary = defectSeveritySummary[severity] || {
+                            statusCounts: {},
+                            total: 0,
+                          };
+                          const statusCounts = statusList.map(
+                            (status) => summary.statusCounts?.[status] || 0,
+                          );
+                          const half = Math.ceil(statusList.length / 2);
+                          const leftStatuses = statusList.slice(0, half);
+                          const rightStatuses = statusList.slice(half);
                           return (
-                            <button
-                              key={pageNum}
-                              type="button"
-                              className={`px-2 py-1 rounded text-sm font-medium transition-all duration-150 ${isCurrent ? "bg-blue-600 text-white shadow-sm" : "bg-gray-200 text-gray-700 hover:bg-blue-100"}`}
-                              onClick={() => setCurrentPage(pageNum)}
-                              disabled={isCurrent}
-                              style={{ minWidth: 32 }}
+                            <div
+                              key={severity}
+                              className={`bg-white rounded-xl shadow flex flex-col justify-between min-h-[200px] min-w-[300px] border border-gray-200 border-l-8`}
+                              style={{ borderLeftColor: hexColor }}
                             >
-                              {pageNum}
-                            </button>
+                              <div className="px-6 pt-4 pb-1">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span
+                                    className="font-semibold text-base"
+                                    style={{ color: hexColor }}
+                                  >
+                                    {severityLabel}
+                                  </span>
+                                  <span className="font-semibold text-gray-600 text-base"></span>
+                                </div>
+                                {/* Removed Total Remark count from severity box, only show Total Defect for this severity */}
+                                <div className="flex items-center gap-3 mb-1">
+                                  <span className="text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                                    Total Defect: {summary.validDefects || 0}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex flex-row gap-8 px-6 pb-1">
+                                <div className="flex flex-col gap-1">
+                                  {leftStatuses.map((status, idx) => (
+                                    <div
+                                      key={status}
+                                      className="flex items-center gap-2 text-xs"
+                                    >
+                                      <span
+                                        className="inline-block w-2.5 h-2.5 rounded-full"
+                                        style={{
+                                          backgroundColor: statusColorMap[status],
+                                        }}
+                                      ></span>
+                                      <span className="text-gray-700 font-normal">
+                                        {defectStatuses[idx].statusName}
+                                      </span>
+                                      <span className="text-gray-700 font-medium">
+                                        {statusCounts[idx]}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  {rightStatuses.map((status, idx) => (
+                                    <div
+                                      key={status}
+                                      className="flex items-center gap-2 text-xs"
+                                    >
+                                      <span
+                                        className="inline-block w-2.5 h-2.5 rounded-full"
+                                        style={{
+                                          backgroundColor: statusColorMap[status],
+                                        }}
+                                      ></span>
+                                      <span className="text-gray-700 font-normal">
+                                        {defectStatuses[half + idx]?.statusName}
+                                      </span>
+                                      <span className="text-gray-700 font-medium">
+                                        {statusCounts[half + idx]}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="px-6 pb-3">
+                                <button
+                                  className="mt-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-md font-medium text-xs border border-blue-100 hover:bg-blue-100 transition"
+                                  onClick={() =>
+                                    setPieModal({ open: true, severity })
+                                  }
+                                >
+                                  View Chart
+                                </button>
+                              </div>
+                            </div>
                           );
-                        }
-                        
-                        if (pageNum === 2 && currentPage > 3) {
-                          return (
-                            <span key="start-ellipsis" className="px-2 text-gray-400">
-                              ...
-                            </span>
-                          );
-                        }
-                        if (
-                          pageNum === totalPages - 1 &&
-                          currentPage < totalPages - 2
-                        ) {
-                          return (
-                            <span key="end-ellipsis" className="px-2 text-gray-400">
-                              ...
-                            </span>
-                          );
-                        }
-                        return null;
-                      },
-                    )}
-                    <Button
+                        });
+                      })()}
+                    </div>
+                    <button
+                      onClick={() => {
+                        const container = document.getElementById(
+                          "defects-severity-scroll",
+                        );
+                        if (container) container.scrollLeft += 300;
+                      }}
+                      className="flex-shrink-0 z-10 bg-white shadow-md rounded-full p-1 hover:bg-gray-50 ml-2"
                       type="button"
-                      variant="secondary"
-                      onClick={() =>
-                        setCurrentPage((p) => Math.min(totalPages, p + 1))
-                      }
-                      disabled={currentPage === totalPages}
                     >
-                      <ChevronRight className="w-4 h-4" />
-                    </Button>
+                      <ChevronRight className="w-5 h-5 text-gray-600" />
+                    </button>
                   </div>
                 )}
 
-                {}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">Go to</span>
-                  <input
-                    type="text"
-                    value={pageInput}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9]/g, "");
-                      setPageInput(val);
-                    }}
-                    onBlur={() => {
-                      let numVal = Number(pageInput);
-                      if (pageInput === "" || isNaN(numVal) || numVal < 1) {
-                        numVal = 1;
-                      } else if (numVal > totalPages) {
-                        numVal = totalPages;
-                      }
-                      setCurrentPage(numVal);
-                      setPageInput(String(numVal));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    placeholder="1"
-                    className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <span className="text-sm text-gray-700">/ {totalPages}</span>
-                </div>
+              {/* Pie Chart Modal for Defect Severity Breakdown */}
+              {pieModal.open &&
+                pieModal.severity &&
+                (() => {
+                  const severity = pieModal.severity;
+                  const statusList = defectStatuses.map((s) =>
+                    (s.statusName || "").toLowerCase(),
+                  );
+                  const statusColorMap = Object.fromEntries(
+                    defectStatuses.map((s) => [
+                      (s.statusName || "").toLowerCase(),
+                      s.colorCode,
+                    ]),
+                  );
+                  const summary = defectSeveritySummary[severity] || {
+                    statusCounts: {},
+                    total: 0,
+                  };
+                  const statusCounts = statusList.map(
+                    (status) => summary.statusCounts?.[status] || 0,
+                  );
+                  const pieData = {
+                    labels: statusList.map((s) => s.toUpperCase()),
+                    datasets: [
+                      {
+                        data: statusCounts,
+                        backgroundColor: statusList.map(
+                          (s) => statusColorMap[s] || "#ccc",
+                        ),
+                      },
+                    ],
+                  };
+                  return (
+                    <Modal
+                      isOpen={pieModal.open}
+                      onClose={() => setPieModal({ open: false, severity: null })}
+                      title={`Status Breakdown for ${severity.charAt(0).toUpperCase() + severity.slice(1)}`}
+                    >
+                      <div className="flex flex-col items-center justify-center p-4">
+                        <div className="w-64 h-64">
+                          <ChartJSPie
+                            data={pieData}
+                            options={{
+                              plugins: {
+                                legend: { display: true, position: "bottom" },
+                              },
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </Modal>
+                  );
+                })()}
+            </div>
+
+            {/* Header Row with Import/Export/Add Defect Buttons */}
+            {/* Header Row with Import/Export/Add Defect Buttons */}
+            <div className="flex justify-between items-center m-4">
+              <h1 className="text-2xl font-bold text-gray-900">Defects</h1>
+              <div className="flex gap-2 items-center">
+                {/* Reassign Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowReassign(!showReassign)}
+                  className={`flex items-center px-3 py-2 rounded shadow transition-colors ${showReassign
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
+                    }`}
+                >
+                  <svg
+                    className="w-4 h-4 mr-2"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                    />
+                  </svg>
+                  {showReassign ? 'Hide Reassign' : 'Reassign Defects'}
+                </button>
+
+                {can.defect.create && (
+                  <button
+                    type="button"
+                    className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <svg
+                      className="w-4 h-4 mr-2"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+                      />
+                    </svg>
+                    Import from Excel
+                  </button>
+                )}
+                <input
+                  type="file"
+                  accept=".xlsx,.csv"
+                  onChange={handleImportExcel}
+                  ref={fileInputRef}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  className="flex items-center px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded shadow"
+                  onClick={handleExportExcel}
+                >
+                  <svg
+                    className="w-4 h-4 mr-2"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12V4m0 0l-4 4m4-4l4 4"
+                    />
+                  </svg>
+                  Export to Excel
+                </button>
+                {can.defect.create && (
+                  <Button onClick={openAddModal} icon={Plus}>
+                    Add Defect
+                  </Button>
+                )}
               </div>
             </div>
-          </CardContent>
-        </Card>
-        </>
+
+            {/* Defect Table in a single frame with search/filter in one line */}
+            <Card>
+              <CardContent className="p-0">
+                {/* Results Summary */}
+                {(filteredDefects.length > 0 ||
+                  backendDefects.length > 0 ||
+                  isLoading) && (
+                    <div className="p-3 mx-4 mt-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-blue-700">
+                          {isLoading ? (
+                            <span className="font-medium flex items-center">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-700 mr-2"></div>
+                              Loading Remarks...
+                            </span>
+                          ) : (
+                            <span className="font-medium">
+                              {totalCount} remark
+                              {totalCount !== 1 ? "s" : ""} found
+                            </span>
+                          )}
+                        </div>
+                        {!isLoading && !isServerPaginated &&
+                          filteredDefects.length !== backendDefects.length && (
+                            <div className="text-xs text-blue-600 font-medium">
+                              {backendDefects.length} total defects in project
+                            </div>
+                          )}
+                      </div>
+                    </div>
+                  )}
+
+                {!isLoading ? <div className="overflow-x-auto mt-4">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 whitespace-nowrap">
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 z-20 bg-gray-50 border-r border-gray-100"
+                          style={{ minWidth: 120, maxWidth: 120 }}
+                        >
+                          Defect ID
+                        </th>
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[120px] z-20 bg-gray-50 border-r border-gray-100"
+                          style={{ minWidth: 220, maxWidth: 220 }}
+                        >
+                          Brief Description
+                        </th>
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[340px] z-20 bg-gray-50 border-r border-gray-100"
+                          style={{ minWidth: 100, maxWidth: 100 }}
+                        >
+                          Steps
+                        </th>
+                        <th
+                          className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-[440px] z-20 bg-gray-50 border-r border-gray-100"
+                          style={{ minWidth: 120, maxWidth: 120 }}
+                        >
+                          Attachment
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Module
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Submodule
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Type
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Severity
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Priority
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          History
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Assigned To
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Entered By
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Release
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+
+                        <th
+                          colSpan={4}
+                          className="px-2 py-2 sticky left-0 z-20 bg-gray-50 border-r border-gray-200"
+                          style={{ minWidth: 560, maxWidth: 560 }}
+                        >
+                          <input
+                            type="text"
+                            placeholder="Search ID / Description..."
+                            value={filters.search}
+                            onChange={(e) =>
+                              setFilters((f) => ({ ...f, search: e.target.value }))
+                            }
+                            className="w-full px-2 py-3 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-normal"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 140 }}>
+                          <SearchableMultiSelect
+                            options={modules.map((m) => ({
+                              value: m.name,
+                              label: m.name,
+                            }))}
+                            selectedValues={filters.module}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, module: values, subModule: [] }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 140 }}>
+                          <SearchableMultiSelect
+                            options={filterSubmodules.map((sm) => ({
+                              value: sm.name,
+                              label: sm.name,
+                            }))}
+                            selectedValues={filters.subModule}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, subModule: values }))
+                            }
+                            placeholder={
+                              !filters.module.length
+                                ? "Select module"
+                                : filterSubmodules.length === 0
+                                  ? "None"
+                                  : "All"
+                            }
+                            className="text-xs"
+                            disabled={!filters.module.length}
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 120 }}>
+                          <SearchableMultiSelect
+                            options={defectTypes.map((t) => ({
+                              value: t.name,
+                              label: t.name,
+                            }))}
+                            selectedValues={filters.type}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, type: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 120 }}>
+                          <SearchableMultiSelect
+                            options={severities.map((s) => ({
+                              value: s.name,
+                              label: s.name,
+                            }))}
+                            selectedValues={filters.severity}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, severity: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 120 }}>
+                          <SearchableMultiSelect
+                            options={priorities.map((p) => ({
+                              value: p.name,
+                              label: p.name,
+                            }))}
+                            selectedValues={filters.name}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, name: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 120 }}>
+                          <SearchableMultiSelect
+                            options={
+                              isStatusLoading
+                                ? []
+                                : statusError
+                                  ? []
+                                  : defectStatuses.map((s) => ({
+                                    value: s.statusName,
+                                    label: s.statusName,
+                                  }))
+                            }
+                            selectedValues={filters.status}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, status: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                            disabled={isStatusLoading || !!statusError}
+                          />
+                        </th>
+
+                        <th className="px-2 py-2"></th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 140 }}>
+                          <SearchableMultiSelect
+                            options={projectDevelopers
+                              .filter(
+                                (dev, index, self) =>
+                                  self.findIndex((d) => d.id === dev.id) === index
+                              )
+                              .map((dev) => ({
+                                value: dev.id.toString(),
+                                label: dev.role ? `${dev.name} (${dev.role})` : dev.name,
+                              }))}
+                            selectedValues={filters.assignedTo}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, assignedTo: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 140 }}>
+                          <SearchableMultiSelect
+                            options={uniqueEnteredByNames.map((name) => ({
+                              value: name,
+                              label: name,
+                            }))}
+                            selectedValues={filters.reportedBy}
+                            onChange={(values) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                reportedBy: values,
+                              }))
+                            }
+                            placeholder={
+                              uniqueEnteredByNames.length === 0 ? "None" : "All"
+                            }
+                            className="text-xs"
+                            disabled={uniqueEnteredByNames.length === 0}
+                          />
+                        </th>
+
+                        <th className="px-2 py-2" style={{ minWidth: 140 }}>
+                          <SearchableMultiSelect
+                            options={releaseOptions}
+                            selectedValues={filters.releaseId}
+                            onChange={(values) =>
+                              setFilters((f) => ({ ...f, releaseId: values }))
+                            }
+                            placeholder="All"
+                            className="text-xs"
+                          />
+                        </th>
+
+                        <th className="px-2 py-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFilters({
+                                id: "",
+                                module: [],
+                                subModule: [],
+                                type: [],
+                                severity: [],
+                                name: [],
+                                status: [],
+                                releaseId: [],
+                                assignedTo: [],
+                                reportedBy: [],
+                                search: "",
+                              })
+                            }
+                            className="text-ms px-2 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors font-medium w-full text-center"
+                          >
+                            Clear
+                          </button>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {filteredDefects.length > 0 ? (
+                        paginatedDefects.map((defect) => (
+                          <tr
+                            key={defect.defectId}
+                            ref={
+                              highlightId === defect.defectId
+                                ? highlightedRowRef
+                                : undefined
+                            }
+                            className={`border-b border-gray-200 hover:bg-gray-50 ${highlightId === defect.defectId ? "border-2 border-blue-500" : ""}`}
+                          >
+                            <td
+                              className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 sticky left-0 z-10 bg-white border-r border-gray-200"
+                              style={{ minWidth: 120 }}
+                            >
+                              {defect.defectId}
+                            </td>
+                            <td
+                              className="px-6 py-4 text-sm text-gray-900 sticky left-[120px] z-10 bg-white border-r border-gray-200"
+                              style={{ minWidth: 220, maxWidth: 220 }}
+                            >
+                              <div
+                                className="break-words overflow-hidden"
+                                style={{
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: "vertical",
+                                  lineHeight: "1.4",
+                                  maxHeight: "4.2em",
+                                }}
+                                title={defect.description}
+                              >
+                                {defect.description}
+                              </div>
+                            </td>
+                            <td
+                              className="px-6 py-4 text-sm text-blue-600 cursor-pointer sticky left-[340px] z-10 bg-white border-r border-gray-200"
+                              style={{ minWidth: 100, maxWidth: 100 }}
+                            >
+                              <button
+                                type="button"
+                                className="flex items-center space-x-1 hover:underline"
+                                onClick={() => {
+                                  setViewingSteps(defect.steps);
+                                  setIsViewStepsModalOpen(true);
+                                }}
+                                title="View Steps"
+                              >
+                                <Eye className="w-4 h-4 mr-1" />
+                                <span>View</span>
+                              </button>
+                            </td>
+                            <td
+                              className="px-6 py-4 text-sm text-gray-900 sticky left-[440px] z-10 bg-white border-r border-gray-200"
+                              style={{ minWidth: 120, maxWidth: 120 }}
+                            >
+                              {defect.attachment ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleViewAttachment(defect.attachment)
+                                  }
+                                  className="text-blue-600 hover:text-blue-800 underline bg-transparent border-none cursor-pointer"
+                                >
+                                  View Attachment
+                                </button>
+                              ) : (
+                                <span className="text-gray-400">No attachment</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-900">
+                              {defect.module_name}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-900">
+                              {defect.sub_module_name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {defect.defect_type_name || defect.defectTypeName}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {renderColoredSpan(
+                                defect.severity_name,
+                                getSeverityColor(defect.severity_name),
+                              )}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {renderColoredSpan(
+                                defect.priority_name,
+                                getPriorityColor(defect.priority_name),
+                              )}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap w-32">
+                              <div className="flex flex-col items-center gap-1">
+                                {renderColoredSpan(
+                                  defect.defect_status_name,
+                                  getStatusColor(defect.defect_status_name),
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                              <button
+                                type="button"
+                                className="text-blue-600 hover:text-blue-900 p-1"
+                                title="View defect history"
+                                onClick={() =>
+                                  handleOpenDefectHistory(defect.defectId)
+                                }
+                                disabled={!can.defect.history}
+                              >
+                                <History className="h-5 w-5 inline" />
+                              </button>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {defect.assigned_to_name || "-"}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {defect.assigned_by_name || "-"}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {(defect as any).release_name?.toString() ||
+                                releaseMap[(defect as any).releaseId || ""] ||
+                                "-"}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  className="text-blue-600 hover:text-blue-900 flex items-center"
+                                  title="View Defect Details"
+                                  onClick={() => {
+                                    setViewingDefectDetails({
+                                      defectId: defect.defectId,
+                                      description: defect.description,
+                                      steps: defect.steps,
+                                      module: defect.module_name,
+                                      submodule: defect.sub_module_name,
+                                      type: defect.defect_type_name,
+                                      severity: defect.severity_name,
+                                      name: defect.priority_name,
+                                      status: defect.defect_status_name,
+                                      assignedTo: defect.assigned_to_name,
+                                      enteredBy: defect.assigned_by_name,
+                                      release:
+                                        (defect as any).release_name?.toString() ||
+                                        releaseMap[
+                                        (defect as any).releaseId || ""
+                                        ] ||
+                                        "-",
+                                      attachment: defect.attachment,
+                                    });
+                                    setIsViewDefectDetailsModalOpen(true);
+                                    navigate(
+                                      `/projects/${selectedProjectId}/defects?view=${defect.id}`,
+                                      { replace: true },
+                                    );
+                                  }}
+                                >
+                                  <FileText className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="text-green-600 hover:text-green-900 flex items-center"
+                                  title="Edit Defect"
+                                  onClick={() => handleEdit(defect)}
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                {can.defect.delete && (
+                                  <button
+                                    type="button"
+                                    className="text-red-600 hover:text-red-900 flex items-center"
+                                    title="Delete Defect"
+                                    onClick={() => handleDelete(defect.defectId)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {can.defectComment.view && (
+                                  <button
+                                    type="button"
+                                    className="relative text-blue-600 hover:text-blue-800 flex items-center"
+                                    title="Comments"
+                                    onClick={() =>
+                                      handleOpenCommentsModal(defect.defectId)
+                                    }
+                                  >
+                                    <MessageSquare className="w-5 h-5" />
+                                    {defect.commentsCount > 0 && (
+                                      <span className="ml-1 text-xs text-gray-500">
+                                        {defect.commentsCount}
+                                      </span>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td
+                            colSpan={10}
+                            className="p-12 text-center text-gray-500"
+                          >
+                            <CheckCircle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                            <div className="text-lg font-medium text-gray-900 mb-2">
+                              No defects found
+                            </div>
+                            <div className="text-gray-500 mb-4">
+                              No defects have been reported for this project
+                            </div>
+                            {can.defect.create && (
+                              <Button
+                                onClick={openAddModal}
+                                icon={Plus}
+                              >
+                                Add Defect
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div> : <div className="flex justify-center items-center py-20">
+                  <OrbitProgress
+                    variant="dotted"
+                    color="#3B82F6"
+                    size="medium"
+                    text=""
+                    textColor=""
+                  />
+                </div>}
+                {/* Pagination Controls */}
+                <div
+                  className="sticky bottom-0 left-0 w-full bg-white border-t z-10"
+                  style={{ boxShadow: "0 -2px 8px rgba(0,0,0,0.04)" }}
+                >
+                  <div className="flex items-center justify-between px-4 py-4">
+                    { }
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-700">Rows per page:</span>
+                        <select
+                          value={defectsPerPage}
+                          onChange={(e) => {
+                            setDefectsPerPage(Number(e.target.value));
+                            setCurrentPage(1);
+                          }}
+                          className="border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value={5}>5</option>
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                        </select>
+                      </div>
+                      <span className="text-sm text-gray-500">
+                        Showing {startItem}–{endItem} of {totalCount} defects
+                      </span>
+                    </div>
+
+                    { }
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </Button>
+                        { }
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                          (pageNum) => {
+
+                            const isCurrent = pageNum === currentPage;
+                            const isEdge = pageNum === 1 || pageNum === totalPages;
+                            const isNear = Math.abs(pageNum - currentPage) <= 1;
+                            if (isEdge || isNear) {
+                              return (
+                                <button
+                                  key={pageNum}
+                                  type="button"
+                                  className={`px-2 py-1 rounded text-sm font-medium transition-all duration-150 ${isCurrent ? "bg-blue-600 text-white shadow-sm" : "bg-gray-200 text-gray-700 hover:bg-blue-100"}`}
+                                  onClick={() => setCurrentPage(pageNum)}
+                                  disabled={isCurrent}
+                                  style={{ minWidth: 32 }}
+                                >
+                                  {pageNum}
+                                </button>
+                              );
+                            }
+
+                            if (pageNum === 2 && currentPage > 3) {
+                              return (
+                                <span key="start-ellipsis" className="px-2 text-gray-400">
+                                  ...
+                                </span>
+                              );
+                            }
+                            if (
+                              pageNum === totalPages - 1 &&
+                              currentPage < totalPages - 2
+                            ) {
+                              return (
+                                <span key="end-ellipsis" className="px-2 text-gray-400">
+                                  ...
+                                </span>
+                              );
+                            }
+                            return null;
+                          },
+                        )}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() =>
+                            setCurrentPage((p) => Math.min(totalPages, p + 1))
+                          }
+                          disabled={currentPage === totalPages}
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    )}
+
+                    { }
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-700">Go to</span>
+                      <input
+                        type="text"
+                        value={pageInput}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^0-9]/g, "");
+                          setPageInput(val);
+                        }}
+                        onBlur={() => {
+                          let numVal = Number(pageInput);
+                          if (pageInput === "" || isNaN(numVal) || numVal < 1) {
+                            numVal = 1;
+                          } else if (numVal > totalPages) {
+                            numVal = totalPages;
+                          }
+                          setCurrentPage(numVal);
+                          setPageInput(String(numVal));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        placeholder="1"
+                        className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">/ {totalPages}</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </>
         )}
-        {}
+        { }
         <Modal
           isOpen={isModalOpen}
           onClose={resetForm}
@@ -4297,7 +4432,7 @@ React.useEffect(() => {
           size="lg"
         >
           <form onSubmit={handleSubmit} className="space-y-4">
-            {}
+            { }
             <div>
               <Input
                 label="Brief Description"
@@ -4314,7 +4449,7 @@ React.useEffect(() => {
                 }
               />
             </div>
-            {}
+            { }
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Steps
@@ -4328,7 +4463,7 @@ React.useEffect(() => {
                 required
               />
             </div>
-            {}
+            { }
             <ImagePicker
               label="Attachment Image"
               value={(formData as any).attachmentFile || null}
@@ -4362,11 +4497,10 @@ React.useEffect(() => {
                     onClick={() =>
                       handleInputChange("testCaseRequired", "true")
                     }
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      formData.testCaseRequired
-                        ? "bg-green-600 text-white shadow-md"
-                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${formData.testCaseRequired
+                      ? "bg-green-600 text-white shadow-md"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      }`}
                   >
                     Yes
                   </button>
@@ -4375,11 +4509,10 @@ React.useEffect(() => {
                     onClick={() =>
                       handleInputChange("testCaseRequired", "false")
                     }
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      !formData.testCaseRequired
-                        ? "bg-red-600 text-white shadow-md"
-                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${!formData.testCaseRequired
+                      ? "bg-red-600 text-white shadow-md"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      }`}
                   >
                     No
                   </button>
@@ -4387,7 +4520,7 @@ React.useEffect(() => {
               </div>
             )}
 
-            {}
+            { }
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -4435,7 +4568,7 @@ React.useEffect(() => {
                       ? "No submodules"
                       : "Select submodule"}
                   </option>
-                  {}
+                  { }
                   {submodules.map((submodule) => (
                     <option
                       key={`submodule-${submodule.id}`}
@@ -4447,7 +4580,7 @@ React.useEffect(() => {
                 </select>
               </div>
             </div>
-            {}
+            { }
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -4584,7 +4717,7 @@ React.useEffect(() => {
                     </select>
                   </div>
 
-                  {}
+                  { }
                 </>
               )}
 
@@ -4611,7 +4744,7 @@ React.useEffect(() => {
                         (editingDefect && !canChangeStatus)
                       }
                     >
-                      {}
+                      { }
                       {(() => {
                         const currentStatus = defectStatuses.find(
                           (s: any) => String(s.id) === String(originalStatusId),
@@ -4626,7 +4759,7 @@ React.useEffect(() => {
                           </option>
                         );
                       })()}
-                      {}
+                      { }
                       {nextStatuses
                         .filter(
                           (s) => String(s.id) !== String(originalStatusId),
@@ -4661,12 +4794,12 @@ React.useEffect(() => {
                           : allocatedUsers.length === 0
                             ? "No users available for this module"
                             : editingDefect &&
-                                editingDefect.assigned_to_name &&
-                                !formData.assigntoId
+                              editingDefect.assigned_to_name &&
+                              !formData.assigntoId
                               ? editingDefect.assigned_to_name
                               : "Select assignee"}
                       </option>
-                      {}
+                      { }
                       {allocatedUsers.map((user, idx) => (
                         <option
                           key={`${user.userId}-${idx}`}
@@ -4710,7 +4843,7 @@ React.useEffect(() => {
           </form>
         </Modal>
 
-        {}
+        { }
         <Modal
           isOpen={isViewStepsModalOpen}
           onClose={() => setIsViewStepsModalOpen(false)}
@@ -4739,7 +4872,7 @@ React.useEffect(() => {
           </div>
         </Modal>
 
-        {}
+        { }
         <Modal
           isOpen={isViewDefectDetailsModalOpen}
           onClose={() => {
@@ -4902,7 +5035,7 @@ React.useEffect(() => {
           </div>
         </Modal>
 
-        {}
+        { }
         <Modal
           isOpen={isRejectionCommentModalOpen}
           onClose={() => {
@@ -4942,7 +5075,7 @@ React.useEffect(() => {
                     (d) => d.defectId === editingStatusId,
                   ) as FilteredDefect;
                   if (!defect) return setIsRejectionCommentModalOpen(false);
-                  
+
                   setIsEditingRejectionComment(false);
                   setIsRejectionCommentModalOpen(false);
                 }}
@@ -4970,7 +5103,8 @@ React.useEffect(() => {
           </div>
         </Modal>
 
-        {}
+        { }
+        {/* Defect History Modal */}
         <Modal
           isOpen={isHistoryModalOpen}
           onClose={() => setIsHistoryModalOpen(false)}
@@ -5016,7 +5150,7 @@ React.useEffect(() => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {}
+                  {/* Map through history items */}
                   {Array.isArray(viewingDefectHistory) &&
                     viewingDefectHistory.map((entry, idx) => (
                       <tr
@@ -5063,7 +5197,7 @@ React.useEffect(() => {
           </div>
         </Modal>
 
-        {}
+        { }
         <Modal
           isOpen={isCommentsModalOpen}
           onClose={() => setIsCommentsModalOpen(false)}
@@ -5071,8 +5205,8 @@ React.useEffect(() => {
           size="lg"
         >
           <div className="flex flex-col h-[500px]">
-            {}
-            {}
+            { }
+            { }
             <div
               className="flex-1 overflow-y-auto p-4 space-y-3"
               ref={commentsContainerRef}
@@ -5111,24 +5245,21 @@ React.useEffect(() => {
                           className={`flex ${isCurrentUser ? "justify-end" : "justify-start"} w-full`}
                         >
                           <div
-                            className={`max-w-[85%] px-4 py-2.5 ${
-                              isCurrentUser
-                                ? "bg-blue-600 text-white rounded-2xl rounded-tr-sm shadow-md"
-                                : "bg-gray-100 text-gray-800 rounded-2xl rounded-tl-sm shadow-sm"
-                            } ${
-                              isCurrentUser && !isEditing
+                            className={`max-w-[85%] px-4 py-2.5 ${isCurrentUser
+                              ? "bg-blue-600 text-white rounded-2xl rounded-tr-sm shadow-md"
+                              : "bg-gray-100 text-gray-800 rounded-2xl rounded-tl-sm shadow-sm"
+                              } ${isCurrentUser && !isEditing
                                 ? "cursor-pointer hover:opacity-90 transition-opacity"
                                 : ""
-                            } ${isEditing ? "ring-2 ring-blue-400 ring-offset-2" : ""}`}
+                              } ${isEditing ? "ring-2 ring-blue-400 ring-offset-2" : ""}`}
                             onDoubleClick={handleDoubleClick}
                           >
-                            {}
+                            { }
                             <div
-                              className={`text-xs font-semibold mb-1 flex items-center justify-between ${
-                                isCurrentUser
-                                  ? "text-blue-200"
-                                  : "text-blue-600"
-                              }`}
+                              className={`text-xs font-semibold mb-1 flex items-center justify-between ${isCurrentUser
+                                ? "text-blue-200"
+                                : "text-blue-600"
+                                }`}
                             >
                               <span>
                                 {comment.createdByName ||
@@ -5141,7 +5272,7 @@ React.useEffect(() => {
                               )}
                             </div>
 
-                            {}
+                            { }
                             {isEditing ? (
                               <div className="space-y-2">
                                 <textarea
@@ -5149,11 +5280,10 @@ React.useEffect(() => {
                                   onChange={(e) =>
                                     setEditingCommentText(e.target.value)
                                   }
-                                  className={`w-full px-3 py-2 rounded-lg text-sm resize-none min-h-[60px] focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                                    isCurrentUser
-                                      ? "bg-blue-500 text-white placeholder-blue-300"
-                                      : "bg-white text-gray-800 border border-gray-300"
-                                  }`}
+                                  className={`w-full px-3 py-2 rounded-lg text-sm resize-none min-h-[60px] focus:outline-none focus:ring-2 focus:ring-blue-500 ${isCurrentUser
+                                    ? "bg-blue-500 text-white placeholder-blue-300"
+                                    : "bg-white text-gray-800 border border-gray-300"
+                                    }`}
                                   rows={3}
                                   autoFocus
                                   placeholder="Edit your comment..."
@@ -5192,21 +5322,19 @@ React.useEffect(() => {
                               </div>
                             ) : (
                               <div
-                                className={`text-sm leading-relaxed break-words whitespace-pre-wrap ${
-                                  isCurrentUser ? "text-white" : "text-gray-700"
-                                }`}
+                                className={`text-sm leading-relaxed break-words whitespace-pre-wrap ${isCurrentUser ? "text-white" : "text-gray-700"
+                                  }`}
                               >
                                 {comment.text}
                               </div>
                             )}
 
-                            {}
+                            { }
                             <div
-                              className={`mt-1 text-[10px] ${
-                                isCurrentUser
-                                  ? "text-blue-200"
-                                  : "text-gray-400"
-                              }`}
+                              className={`mt-1 text-[10px] ${isCurrentUser
+                                ? "text-blue-200"
+                                : "text-gray-400"
+                                }`}
                             >
                               {new Date(comment.timestamp).toLocaleString(
                                 "en-US",
@@ -5238,7 +5366,7 @@ React.useEffect(() => {
               )}
             </div>
 
-            {}
+            { }
             <div className="border-t border-gray-200 p-4 bg-gray-50 rounded-b-lg">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Add a comment
@@ -5297,7 +5425,7 @@ React.useEffect(() => {
           onConfirm={confirmDelete}
         />
 
-        {}
+        { }
         <Modal
           isOpen={isImageViewerModalOpen}
           onClose={closeImageViewer}
@@ -5311,7 +5439,7 @@ React.useEffect(() => {
                 alt="Attachment"
                 className="max-w-full max-h-[70vh] object-contain rounded-lg"
                 onError={(e) => {
-                  
+
                   const target = e.target as HTMLImageElement;
                   target.style.display = "none";
                   const errorDiv = document.createElement("div");

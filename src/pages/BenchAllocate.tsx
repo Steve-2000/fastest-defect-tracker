@@ -153,7 +153,7 @@ function AllocationPopover({
       <div className="p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold text-lg">
-            {employee.firstName} {employee.lastName}
+            {employee.name || `${employee.firstName || ""} ${employee.lastName || ""}`.trim() || "Employee"}
           </div>
 
           <button
@@ -515,7 +515,13 @@ export default function BenchAllocate() {
       const mappedEmployees = benchData
         .filter(
           (item: any) =>
-            item.employee?.active === true && item.employee?.designationName,
+            item.employee?.active === true &&
+            item.employee?.designationName &&
+            item.employee?.designationName?.toLowerCase() !== "admin" &&
+            item.employee?.roleName?.toLowerCase() !== "admin" &&
+            item.employee?.role?.name?.toLowerCase() !== "admin" &&
+            !item.employee?.firstName?.toLowerCase().includes("admin") &&
+            !item.employee?.name?.toLowerCase().includes("admin"),
         )
         .map((item: any) => ({
           id: String(item.employee?.id || item.id),
@@ -559,6 +565,57 @@ export default function BenchAllocate() {
 
 
 
+  const formatProjectAllocations = (allocations: any[]) => {
+    return allocations.map((alloc: any) => {
+      const userFullName =
+        alloc.userFullName ||
+        alloc.employeeName ||
+        alloc.employee?.name ||
+        (alloc.firstName
+          ? `${alloc.firstName} ${alloc.lastName || ""}`.trim()
+          : "") ||
+        (alloc.employee?.firstName
+          ? `${alloc.employee.firstName} ${alloc.employee.lastName || ""}`.trim()
+          : "") ||
+        alloc.name ||
+        (alloc.userWithRole ? alloc.userWithRole.split("-")[0].trim() : "") ||
+        "Unknown";
+
+      const firstName =
+        alloc.firstName ||
+        alloc.employee?.firstName ||
+        (userFullName !== "Unknown" ? userFullName.split(" ")[0] : "") ||
+        alloc.employee?.name?.split(" ")[0] ||
+        "";
+
+      const lastName =
+        alloc.lastName ||
+        alloc.employee?.lastName ||
+        (userFullName !== "Unknown" && userFullName.includes(" ")
+          ? userFullName.split(" ").slice(1).join(" ")
+          : "") ||
+        (alloc.employee?.name && alloc.employee.name.includes(" ")
+          ? alloc.employee.name.split(" ").slice(1).join(" ")
+          : "") ||
+        "";
+
+      return {
+        id: alloc.id,
+        userFullName,
+        firstName,
+        lastName,
+        roleName: alloc.roleName || alloc.role?.name || "",
+        allocationPercentage:
+          alloc.allocationPercent || alloc.allocationPercentage || 0,
+        startDate: alloc.startDate,
+        endDate: alloc.endDate,
+        employeeId: alloc.employeeId || alloc.employee?.id,
+        roleId: alloc.roleId || alloc.role?.id,
+        userId: alloc.userId || alloc.employee?.id,
+      };
+    });
+  };
+
   useEffect(() => {
     if (selectedProjectId) {
       const fetchAllocations = async () => {
@@ -586,29 +643,7 @@ export default function BenchAllocate() {
 
           console.log("Extracted allocations from response:", allocations);
 
-
-          const mappedAllocations = allocations.map((alloc: any) => ({
-            id: alloc.id,
-            userFullName:
-              alloc.userFullName ||
-              (alloc.firstName
-                ? `${alloc.firstName} ${alloc.lastName || ""}`
-                : alloc.employee?.name
-                  ? alloc.employee.name
-                  : alloc.employee?.firstName
-                    ? `${alloc.employee.firstName} ${alloc.employee.lastName || ""}`
-                    : "Unknown"),
-            firstName: alloc.firstName || alloc.employee?.firstName || alloc.employee?.name || "",
-            lastName: alloc.lastName || alloc.employee?.lastName || "",
-            roleName: alloc.roleName || alloc.role?.name || "",
-            allocationPercentage:
-              alloc.allocationPercent || alloc.allocationPercentage || 0,
-            startDate: alloc.startDate,
-            endDate: alloc.endDate,
-            employeeId: alloc.employeeId || alloc.employee?.id,
-            roleId: alloc.roleId || alloc.role?.id,
-            userId: alloc.userId || alloc.employee?.id,
-          }));
+          const mappedAllocations = formatProjectAllocations(allocations);
 
           console.log("Mapped allocations for display:", mappedAllocations);
 
@@ -1297,9 +1332,10 @@ export default function BenchAllocate() {
         setSelectedBench([]);
         setAllocationModal({ open: false, employees: [] });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Allocation failed:", error);
-      showToast("Failed to allocate employees", "error");
+      const msg = error?.response?.data?.statusMessage || error?.response?.data?.message || "Failed to allocate employees";
+      showToast(msg, "error");
     } finally {
       setIsAllocating(false);
     }
@@ -1332,23 +1368,7 @@ export default function BenchAllocate() {
 
       console.log("Extracted allocations:", allocations);
 
-
-      const mappedAllocations = allocations.map((alloc: any) => ({
-        id: alloc.id,
-        userFullName:
-          alloc.userFullName ||
-          (alloc.firstName ? `${alloc.firstName} ${alloc.lastName}` : ""),
-        firstName: alloc.firstName || "",
-        lastName: alloc.lastName || "",
-        roleName: alloc.roleName || alloc.role?.name || "",
-        allocationPercentage:
-          alloc.allocationPercent || alloc.allocationPercentage || 0,
-        startDate: alloc.startDate,
-        endDate: alloc.endDate,
-        employeeId: alloc.employeeId || alloc.employee?.id,
-        roleId: alloc.roleId || alloc.role?.id,
-        userId: alloc.userId || alloc.employee?.id,
-      }));
+      const mappedAllocations = formatProjectAllocations(allocations);
 
       console.log("Mapped allocations:", mappedAllocations);
 
@@ -1378,12 +1398,6 @@ export default function BenchAllocate() {
       }
 
       // Refresh data
-      const allocationsData =
-        await getProjectAllocationsById(selectedProjectId);
-      setProjectAllocations((prev) => ({
-        ...prev,
-        [selectedProjectId]: allocationsData.data || [],
-      }));
       await refreshProjectAllocations();
       await fetchBenchEmployees({}, 0, benchPageSize);
       setSelectedProjectUsers([]);
@@ -1457,7 +1471,29 @@ export default function BenchAllocate() {
 
       console.log("Allocation History:", response);
 
-      setViewAllocationData(response.data);
+      const rawList = Array.isArray(response)
+        ? response
+        : response?.data?.data || response?.data || [];
+
+      const availablePeriods = rawList.map((item: any) => ({
+        project:
+          item.project?.name ||
+          item.project?.projectName ||
+          item.projectName ||
+          item.project ||
+          "Unknown Project",
+        period:
+          item.startDate && item.endDate
+            ? `${String(item.startDate).split("T")[0]} to ${String(item.endDate).split("T")[0]}`
+            : item.period || "-",
+        percentage:
+          item.allocationPercentage ??
+          item.allocationPercent ??
+          item.percentage ??
+          0,
+      }));
+
+      setViewAllocationData({ availablePeriods });
 
       setPopoverEmployee(employee);
     } catch (error) {
@@ -2414,7 +2450,7 @@ export default function BenchAllocate() {
                       >
                         <td>
                           <span className="inline-block max-w-[200px] truncate align-middle">
-                            {emp.userFullName}
+                            {emp.userFullName || `${emp.firstName || ""} ${emp.lastName || ""}`.trim() || emp.name || "Unknown"}
                           </span>
                         </td>
                         <td>{emp.roleName}</td>

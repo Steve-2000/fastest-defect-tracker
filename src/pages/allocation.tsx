@@ -1434,7 +1434,7 @@ export const Allocation: React.FC = () => {
 
       console.error("Error allocating test cases to QA:", error);
 
-      setQaAllocationError(error?.response?.data?.message || error?.message || "Failed to allocate test cases");
+      setQaAllocationError(error?.response?.data?.statusMessage || error?.response?.data?.message || error?.message || "Failed to allocate test cases");
 
     } finally {
 

@@ -68,7 +68,13 @@ export const Bench: React.FC = () => {
       const response = await getBenchList();
 
       const activeEmployees = response.filter(
-        (item: any) => item.employee?.active === true,
+        (item: any) =>
+          item.employee?.active === true &&
+          item.employee?.designationName?.toLowerCase() !== "admin" &&
+          item.employee?.roleName?.toLowerCase() !== "admin" &&
+          item.employee?.role?.name?.toLowerCase() !== "admin" &&
+          !item.employee?.firstName?.toLowerCase().includes("admin") &&
+          !item.employee?.name?.toLowerCase().includes("admin"),
       );
 
       const mappedEmployees = await Promise.all(

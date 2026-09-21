@@ -638,7 +638,7 @@ useEffect(() => {
         setRemarkRatioData(null);
         setLoadingRemarkRatio(false);
       });
-  }, [selectedProjectId]);
+  }, [selectedProjectId, klocUpdated]);
 
   useEffect(() => {
     if (!selectedProjectId || !releases.length) {
@@ -735,10 +735,16 @@ useEffect(() => {
           const Kloc = klocRes.data.kloc;
           setKlocInput(Kloc);
           setKlocChanged(false);
-          setDefectDensity((prev) => ({
-            ...prev!,
-            kloc: Kloc,
-          }));
+          setDefectDensity((prev) => {
+            if (!prev) return prev;
+            const tot = prev.totalDefects ?? 0;
+            const newDens = Kloc > 0 ? Math.round((tot / Kloc) * 100) / 100 : prev.defectDensity;
+            return {
+              ...prev,
+              kloc: Kloc,
+              defectDensity: newDens,
+            };
+          });
           setKlocUpdated(prev => prev + 1);
         }
       } catch {
@@ -755,19 +761,22 @@ useEffect(() => {
     const value = Number(klocInput) || 0.1;
 
     try {
-      await updateProjectKloc(Number(selectedProjectId), klocInput);
+      await updateProjectKloc(Number(selectedProjectId), value);
       const klocRes = await getKILOC(Number(selectedProjectId));
-      if (klocRes?.data?.kloc) {
-        const updatedKloc = klocRes.data.kloc;
-        setKlocInput(updatedKloc);
-        setKlocChanged(false);
-        setDefectDensity((prev) => ({
-          ...prev!,
-          kloc: updatedKloc || value,
-        }));
-        setKlocUpdated(prev => prev + 1);
-        await refreshCombinedRiskForProject(selectedProjectId);
-      }
+      const updatedKloc = (klocRes?.data?.kloc && klocRes.data.kloc > 0) ? klocRes.data.kloc : value;
+      
+      const totDefects = defectDensity?.totalDefects ?? 0;
+      const newDensity = updatedKloc > 0 ? Math.round((totDefects / updatedKloc) * 100) / 100 : 0;
+
+      setKlocInput(updatedKloc);
+      setKlocChanged(false);
+      setDefectDensity((prev) => ({
+        ...prev!,
+        kloc: updatedKloc,
+        defectDensity: newDensity,
+      }));
+      setKlocUpdated(prev => prev + 1);
+      await refreshCombinedRiskForProject(selectedProjectId);
     } catch (error) {
       console.error("Failed to update KLOC:", error);
     }
@@ -803,9 +812,12 @@ useEffect(() => {
         const calculatedKloc = res.data.totalKLOC;
         setKlocInput(calculatedKloc);
         setKlocChanged(true);
+        const totDefects = defectDensity?.totalDefects ?? 0;
+        const newDensity = calculatedKloc > 0 ? Math.round((totDefects / calculatedKloc) * 100) / 100 : 0;
         setDefectDensity((prev) => ({
           ...prev!,
           kloc: calculatedKloc,
+          defectDensity: newDensity,
         }));
 
         setShowKlocModal(false);
@@ -828,16 +840,16 @@ useEffect(() => {
     }
   };
 
-  // Fetch day-wise defects when a release is selected
+  // Fetch day-wise defects when a project or release is selected
   useEffect(() => {
-    if (selectedProjectId && selectedRelease?.releaseId) {
+    if (selectedProjectId) {
       setLoadingReleaseDailyDefects(true);
       getReleaseDefectsDaily(
         String(selectedProjectId),
-        String(selectedRelease.releaseId),
+        selectedRelease?.releaseId ? String(selectedRelease.releaseId) : "",
       )
         .then((res) => {
-          setReleaseDailyDefects(res.data || []);
+          setReleaseDailyDefects(res?.data || res || []);
           setLoadingReleaseDailyDefects(false);
         })
         .catch(() => {
@@ -849,31 +861,15 @@ useEffect(() => {
     }
   }, [selectedProjectId, selectedRelease]);
 
-  // Fetch day-wise fixed defects when a release is selected
+  // Fetch day-wise fixed defects when a project or release is selected
   useEffect(() => {
-    if (selectedProjectId && selectedRelease?.releaseId) {
-      console.log(
-        "Fetching time to fix data for projectId:",
-        selectedProjectId,
-        "releaseId:",
-        selectedRelease.releaseId,
-      );
-      console.log("Selected release object:", selectedRelease);
+    if (selectedProjectId) {
       setLoadingReleaseDailyFixedDefects(true);
-      console.log("=== New API Call Debug ===");
-      console.log(
-        "Calling getTimeToFixDefectsDaily with projectId:",
-        Number(selectedProjectId),
-        "releaseId:",
-        selectedRelease.releaseId,
-      );
       getTimeToFixDefectsDaily(
         Number(selectedProjectId),
-        selectedRelease.releaseId,
+        selectedRelease?.releaseId ? Number(selectedRelease.releaseId) : undefined,
       )
         .then((res) => {
-          console.log("=== New API Response Debug ===");
-          console.log("Time to fix defects response:", res);
           let dailyData = [];
           if (res && Array.isArray(res)) {
             dailyData = res;
@@ -882,9 +878,6 @@ useEffect(() => {
           } else if (res && res.dailyData && Array.isArray(res.dailyData)) {
             dailyData = res.dailyData;
           }
-
-          console.log("Processed daily data:", dailyData);
-          console.log("Daily data length:", dailyData.length);
           setReleaseDailyFixedDefects(dailyData);
           setLoadingReleaseDailyFixedDefects(false);
         })
@@ -894,11 +887,6 @@ useEffect(() => {
           setLoadingReleaseDailyFixedDefects(false);
         });
     } else {
-      console.log(
-        "Not fetching time to fix data - missing projectId or releaseId",
-      );
-      console.log("selectedProjectId:", selectedProjectId);
-      console.log("selectedRelease:", selectedRelease);
       setReleaseDailyFixedDefects(null);
     }
   }, [selectedProjectId, selectedRelease]);
@@ -1000,6 +988,9 @@ projects.forEach((project) => {
             totalDefects: totalDefects,
             defectDensity: defectDensity,
           });
+          if (!klocChanged && kloc) {
+            setKlocInput(kloc);
+          }
         } else {
           setDefectDensity({ kloc: 0.1, totalDefects: 0, defectDensity: 0 });
         }
@@ -1691,6 +1682,11 @@ projects.forEach((project) => {
                 onKlocInputChange={(value) => {
                   setKlocInput(value);
                   setKlocChanged(true);
+                  if (defectDensity) {
+                    const tot = defectDensity.totalDefects ?? 0;
+                    const liveDensity = value > 0 ? Math.round((tot / value) * 100) / 100 : 0;
+                    setDefectDensity((prev) => prev ? ({ ...prev, defectDensity: liveDensity }) : prev);
+                  }
                 }}
                 onKlocUpdate={handleKlocInputChange}
                 onCalculateClick={() => setShowKlocModal(true)}
@@ -1989,30 +1985,41 @@ projects.forEach((project) => {
           ) : reopenSummary && reopenSummary.length > 0 ? (
             (() => {
               const labels = reopenSummary.map((item) => item.label);
-              const data = {
-                labels,
-                datasets: [
-                  {
-                    data: reopenSummary.map((item) => item.count),
-                    backgroundColor: [
-                      "#4285F4",
-                      "#FBBC05",
-                      "#EA4335",
-                      "#C5221F",
-                      "#F29900",
-                      "#00B894",
-                      "#A259F7",
-                      "#00B8D9",
-                      "#FF6F00",
-                      "#8E24AA",
-                    ].slice(0, reopenSummary.length),
-                  },
-                ],
-              };
               const total = reopenSummary.reduce(
                 (a, b) => a + (b.count || 0),
                 0,
               );
+              const isAllZero = total === 0;
+              const data = isAllZero
+                ? {
+                    labels: ["No Reopened Defects"],
+                    datasets: [
+                      {
+                        data: [1],
+                        backgroundColor: ["#E2E8F0"],
+                      },
+                    ],
+                  }
+                : {
+                    labels,
+                    datasets: [
+                      {
+                        data: reopenSummary.map((item) => item.count),
+                        backgroundColor: [
+                          "#4285F4",
+                          "#FBBC05",
+                          "#EA4335",
+                          "#C5221F",
+                          "#F29900",
+                          "#00B894",
+                          "#A259F7",
+                          "#00B8D9",
+                          "#FF6F00",
+                          "#8E24AA",
+                        ].slice(0, reopenSummary.length),
+                      },
+                    ],
+                  };
               return (
                 <>
                   <div className="w-64 h-64 relative">
@@ -2021,7 +2028,7 @@ projects.forEach((project) => {
                       options={{
                         plugins: { legend: { display: false } },
                         onHover: (_, elements) => {
-                          if (elements.length > 0) {
+                          if (!isAllZero && elements.length > 0) {
                             const elementIndex = elements[0].index;
                             const label = labels[elementIndex];
                             const filteredDefects =
@@ -2331,12 +2338,12 @@ projects.forEach((project) => {
                   data={(() => {
                     if (
                       selectedProjectId &&
-                      selectedRelease?.releaseId &&
                       releaseDailyDefects &&
                       releaseDailyDefects.length > 0
                     ) {
                       const maxDay = Math.max(
-                        ...releaseDailyDefects.map((d) => d.dayNumber),
+                        ...releaseDailyDefects.map((d) => d.dayNumber || 1),
+                        7,
                       );
                       const days = Array.from(
                         { length: maxDay },
@@ -2345,7 +2352,7 @@ projects.forEach((project) => {
                       const defectCounts = Array(maxDay).fill(0);
                       releaseDailyDefects.forEach((d) => {
                         if (d.dayNumber >= 1 && d.dayNumber <= maxDay) {
-                          defectCounts[d.dayNumber - 1] = d.totalDefects;
+                          defectCounts[d.dayNumber - 1] = d.totalDefects || 0;
                         }
                       });
                       return days.map((day, i) => ({
@@ -2354,29 +2361,9 @@ projects.forEach((project) => {
                       }));
                     }
                     
-                    if (!selectedRelease?.releaseName) {
-                      return Array.from({ length: 7 }, (_, i) => ({
-                        day: `Day ${i + 1}`,
-                        defects: 0,
-                      }));
-                    }
-                    const days = Array.from(
-                      { length: 7 },
-                      (_, i) => `Day ${i + 1}`,
-                    );
-                    const dateCounts: number[] = Array(7).fill(0);
-                    filteredDefects.forEach((d) => {
-                      if (d.createdAt) {
-                        const createdDate = new Date(d.createdAt);
-                        const dayIdx = createdDate.getDate() - 1;
-                        if (dayIdx >= 0 && dayIdx < 7) {
-                          dateCounts[dayIdx]++;
-                        }
-                      }
-                    });
-                    return days.map((day, i) => ({
-                      day,
-                      defects: dateCounts[i],
+                    return Array.from({ length: 7 }, (_, i) => ({
+                      day: `Day ${i + 1}`,
+                      defects: 0,
                     }));
                   })()}
                 >
@@ -2427,7 +2414,7 @@ projects.forEach((project) => {
               {!loadingReleaseDailyDefects &&
                 (!releaseDailyDefects || releaseDailyDefects.length === 0) && (
                   <div className="text-gray-400 text-center mt-2">
-                    No time to find data available for selected release
+                    No time to find data available
                   </div>
                 )}
             </div>
@@ -2443,16 +2430,21 @@ projects.forEach((project) => {
                   data={(() => {
                     if (
                       selectedProjectId &&
-                      selectedRelease?.releaseId &&
                       releaseDailyFixedDefects &&
                       releaseDailyFixedDefects.length > 0
                     ) {
-                      const maxDay = Math.max(...releaseDailyFixedDefects.map((d) => d.dayNumber));
-                      const days = Array.from({ length: maxDay }, (_, i) => `Day ${i + 1}`);
+                      const maxDay = Math.max(
+                        ...releaseDailyFixedDefects.map((d) => d.dayNumber || 1),
+                        7,
+                      );
+                      const days = Array.from(
+                        { length: maxDay },
+                        (_, i) => `Day ${i + 1}`,
+                      );
                       const fixedCounts = Array(maxDay).fill(0);
                       releaseDailyFixedDefects.forEach((d) => {
                         if (d.dayNumber >= 1 && d.dayNumber <= maxDay) {
-                          fixedCounts[d.dayNumber - 1] = d.defectFixedCount;
+                          fixedCounts[d.dayNumber - 1] = d.defectFixedCount || 0;
                         }
                       });
                       return days.map((day, i) => ({
@@ -2465,152 +2457,6 @@ projects.forEach((project) => {
                       day: `Day ${i + 1}`,
                       defects: 0,
                     }));
-                    console.log("=== Time to Fix Chart Data Processing ===");
-                    console.log("selectedProjectId:", selectedProjectId);
-                    console.log("selectedRelease:", selectedRelease);
-                    console.log(
-                      "releaseDailyFixedDefects:",
-                      releaseDailyFixedDefects,
-                    );
-                    console.log(
-                      "releaseDailyFixedDefects length:",
-                      releaseDailyFixedDefects?.length,
-                    );
-
-                    if (
-                      selectedProjectId &&
-                      selectedRelease?.releaseId &&
-                      releaseDailyFixedDefects &&
-                      releaseDailyFixedDefects.length > 0
-                    ) {
-                      
-                      console.log(
-                        "Processing time to fix chart data:",
-                        releaseDailyFixedDefects,
-                      );
-                      console.log(
-                        "API data structure check:",
-                        releaseDailyFixedDefects.map((d) => ({
-                          dayNumber: d.dayNumber,
-                          defectFixedCount: d.defectFixedCount,
-                          label: d.label,
-                          timeRange: d.timeRange,
-                        })),
-                      );
-                      const days = Array.from(
-                        { length: 7 },
-                        (_, i) => `Day ${i + 1}`,
-                      );
-                      const fixedCounts = Array(7).fill(0);
-                      releaseDailyFixedDefects.forEach((d) => {
-                        if (d.dayNumber >= 1 && d.dayNumber <= 7) {
-                          fixedCounts[d.dayNumber - 1] = d.defectFixedCount;
-                        }
-                      });
-                      const chartData = days.map((day, i) => ({
-                        day,
-                        defects: fixedCounts[i],
-                      }));
-                      console.log("Time to fix chart data:", chartData);
-                      return chartData;
-                    }
-                    
-                    console.log("=== Using Fallback Logic ===");
-
-                    
-                    if (!selectedRelease?.releaseId) {
-                      console.log(
-                        "No specific release selected, returning empty data",
-                      );
-                      return Array.from({ length: 7 }, (_, i) => ({
-                        day: `Day ${i + 1}`,
-                        defects: 0,
-                      }));
-                    }
-
-                    const days = Array.from(
-                      { length: 7 },
-                      (_, i) => `Day ${i + 1}`,
-                    );
-                    const fixTimes: number[][] = Array(7)
-                      .fill(null)
-                      .map(() => []);
-
-                    
-                    const releaseFilteredDefects =
-                      selectedProjectId && selectedRelease?.releaseId
-                        ? defects.filter(
-                            (d) =>
-                              d.projectId === selectedProjectId &&
-                              Number(d.releaseId ?? 0) ===
-                                Number(selectedRelease.releaseId),
-                          )
-                        : [];
-
-                    console.log(
-                      "Fallback: filtering defects for releaseId:",
-                      selectedRelease?.releaseId,
-                    );
-                    console.log(
-                      "Fallback: total defects count:",
-                      defects.length,
-                    );
-                    console.log(
-                      "Fallback: defects with matching projectId:",
-                      defects.filter((d) => d.projectId === selectedProjectId)
-                        .length,
-                    );
-                    console.log(
-                      "Fallback: releaseFilteredDefects count:",
-                      releaseFilteredDefects.length,
-                    );
-                    console.log(
-                      "Fallback: sample defects with releaseId:",
-                      releaseFilteredDefects.slice(0, 3).map((d) => ({
-                        id: d.id,
-                        releaseId: d.releaseId,
-                        releaseIdType: typeof d.releaseId,
-                        createdAt: d.createdAt,
-                        updatedAt: d.updatedAt,
-                      })),
-                    );
-                    console.log(
-                      "Fallback: selectedRelease.releaseId type:",
-                      typeof selectedRelease?.releaseId,
-                    );
-
-                    releaseFilteredDefects.forEach((d) => {
-                      if (
-                        d.createdAt &&
-                        d.updatedAt &&
-                        d.updatedAt > d.createdAt
-                      ) {
-                        const createdDate = new Date(d.createdAt);
-                        const dayIdx = createdDate.getDate() - 1; 
-                        if (dayIdx >= 0 && dayIdx < 7) {
-                          const daysToFix = Math.ceil(
-                            (new Date(d.updatedAt).getTime() -
-                              new Date(d.createdAt).getTime()) /
-                              (1000 * 60 * 60 * 24),
-                          );
-                          fixTimes[dayIdx].push(daysToFix);
-                        }
-                      }
-                    });
-                    const fallbackData = days.map((day, i) => ({
-                      day,
-                      defects:
-                        fixTimes[i].length > 0
-                          ? fixTimes[i].reduce((a, b) => a + b, 0) /
-                            fixTimes[i].length
-                          : 0,
-                    }));
-                    console.log(
-                      "Using fallback time to fix data:",
-                      fallbackData,
-                    );
-
-                    return fallbackData;
                   })()}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
@@ -2778,11 +2624,18 @@ function DefectDensityMeter({
   canEdit?: boolean;
 }) {
   
+  const activeKloc =
+    typeof klocInput === "number" && klocInput > 0
+      ? klocInput
+      : typeof kloc === "number" && kloc > 0
+        ? kloc
+        : 1.0;
+
   const density =
-    typeof defectDensity === "number"
-      ? defectDensity
-      : kloc > 0
-        ? defectCount / kloc
+    defectCount >= 0 && activeKloc > 0
+      ? Math.round((defectCount / activeKloc) * 100) / 100
+      : typeof defectDensity === "number"
+        ? defectDensity
         : 0;
   
   
@@ -2965,18 +2818,31 @@ function DefectDensityMeter({
             min={0.1}
             step={0.1}
             className="w-20 px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center"
-            value={klocInput || kloc}
-            onChange={(e) =>
-              onKlocInputChange &&
-              onKlocInputChange(Number(e.target.value) || 0.1)
-            }
+            value={klocInput !== undefined ? (klocInput === 0 ? "" : klocInput) : kloc}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === "") {
+                onKlocInputChange && onKlocInputChange(0);
+              } else {
+                const num = parseFloat(val);
+                if (!isNaN(num)) {
+                  onKlocInputChange && onKlocInputChange(num);
+                }
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && klocChanged && onKlocUpdate) {
+                e.preventDefault();
+                onKlocUpdate();
+              }
+            }}
             style={{ minWidth: 60 }}
           />
           <button
             type="button"
             className={`ml-1 w-8 h-8 rounded-full bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition disabled:opacity-50`}
             onClick={onKlocUpdate}
-            disabled={!klocInput || !klocChanged}
+            disabled={!klocInput || klocInput <= 0 || !klocChanged}
             title="Update KLOC value"
           >
             <svg

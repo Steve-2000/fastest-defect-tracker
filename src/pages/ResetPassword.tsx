@@ -21,10 +21,10 @@ const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   setError('');
 
-  // if (!token) {
-  //   setError('Invalid or missing reset token.');
-  //   return;
-  // }
+  if (!token) {
+    setError('Invalid or missing reset token. Please use the link sent to your email.');
+    return;
+  }
 
   if (newPassword !== confirmPassword) {
     setError('New passwords do not match');
@@ -39,16 +39,14 @@ const handleSubmit = async (e: React.FormEvent) => {
       newPassword
     );
 
-    if (response.status === 'Success') {
+    if (response.status?.toLowerCase() === 'success' || response.statusCode === 200) {
       setSuccess(true);
-      console.log(response.statusMessage);
-      
-      setSuccessMessage(response.statusMessage)
+      setSuccessMessage(response.statusMessage || 'Password reset successfully. You can now log in.');
     } else {
       setError(response.statusMessage || 'Failed to reset password.');
     }
   } catch (err: any) {
-    setError(err.response?.data?.message || 'Failed to reset password.');
+    setError(err.response?.data?.statusMessage || err.response?.data?.message || 'Failed to reset password.');
   } finally {
     setLoading(false);
   }

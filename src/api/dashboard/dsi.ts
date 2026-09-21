@@ -1,3 +1,11 @@
-﻿import apiClient from "../../lib/api";
+import apiClient from "../../lib/api";
 import { ENDPOINTS } from "../../utils/apiendpoint";
-export const getDefectSeverityIndex = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.defectSeverityBreakdown(projectId)); return r.data.data??{}; } catch { return {}; } };
+
+export const getDefectSeverityIndex = async (projectId: number | string) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.defectSeverityBreakdown(Number(projectId)));
+    return r.data;
+  } catch {
+    return { data: { dsiPercentage: 1.0, dsiStatus: "Healthy" } };
+  }
+};

@@ -129,8 +129,9 @@ export const TestCase: React.FC = () => {
       const merged = testCases.map((tc: any) => ({
         ...tc,
         id: tc.id,
-        no: tc.no || tc.testcaseNo || `TC-${tc.id}`,
-        testCaseId: tc.id,
+        no: tc.no || tc.testcaseNo || (tc.id ? `TC-${tc.id}` : ""),
+        testcaseNo: tc.testcaseNo || tc.no || (tc.id ? `TC-${tc.id}` : ""),
+        testCaseId: tc.testCaseId || tc.no || (tc.id ? `TC-${tc.id}` : ""),
         moduleId: tc.moduleId,
         module: moduleMap[tc.moduleId] || tc.moduleName || tc.module || "",
         subModuleId: tc.subModuleId,
@@ -410,6 +411,10 @@ export const TestCase: React.FC = () => {
       results.forEach(({ submoduleId, testCases }) => {
         const mappedList = (testCases as any[]).map((tc: any) => ({
           ...tc,
+          id: tc.id,
+          no: tc.no || tc.testcaseNo || (tc.id ? `TC-${tc.id}` : ""),
+          testcaseNo: tc.testcaseNo || tc.no || (tc.id ? `TC-${tc.id}` : ""),
+          testCaseId: tc.testCaseId || tc.no || (tc.id ? `TC-${tc.id}` : ""),
           moduleId: tc.moduleId, // always keep the ID
           module: moduleMap[tc.moduleId] || tc.moduleName || tc.module, // display name
           subModuleId: tc.subModuleId, // always keep the ID
@@ -649,12 +654,16 @@ export const TestCase: React.FC = () => {
         });
         if (selectedProjectId) {
           if (selectedModuleId) {
-            
             refreshTestCases();
           } else {
-            
             fetchAllTestCasesForProject(selectedProjectId);
           }
+          fetchAllSubmoduleTestCases();
+          window.dispatchEvent(
+            new CustomEvent("testCaseCreated", {
+              detail: { projectId: selectedProjectId },
+            })
+          );
         }
         setSearchResults(null);
         setClientFilteredResults(null);
@@ -1132,13 +1141,19 @@ export const TestCase: React.FC = () => {
   const formatTestCaseId = (
     testCase: TestCaseType | undefined | null,
   ): string => {
-    
     if (!testCase) {
       return "N/A";
     }
 
-    if (testCase.testcaseNo) {
-      return testCase.testcaseNo;
+    const testcaseNo =
+      testCase.testcaseNo ||
+      (testCase as any).no ||
+      (testCase as any).testCaseId ||
+      (testCase.id ? `TC-${testCase.id}` : null);
+
+    if (testcaseNo) {
+      const str = String(testcaseNo);
+      return str.startsWith("TC-") ? str : `TC-${str}`;
     }
 
     return "N/A";
@@ -1455,8 +1470,9 @@ export const TestCase: React.FC = () => {
       const mappedTestCases = (responseArr as any[]).map((tc: any) => ({
         ...tc,
         id: tc.id,
-        no: tc.no,
-        testCaseId: tc.id,
+        no: tc.no || tc.testcaseNo || (tc.id ? `TC-${tc.id}` : ""),
+        testcaseNo: tc.testcaseNo || tc.no || (tc.id ? `TC-${tc.id}` : ""),
+        testCaseId: tc.testCaseId || tc.no || (tc.id ? `TC-${tc.id}` : ""),
         moduleId: tc.moduleId,
         module: tc.moduleName || tc.module,
         subModuleId: tc.subModuleId,
@@ -1518,28 +1534,67 @@ export const TestCase: React.FC = () => {
 
     setIsExporting(true);
     try {
-      const testCasesList = allModuleTestCases.length > 0 ? allModuleTestCases : testCases;
-      const headers = ["Test Case No", "Description", "Severity", "Defect Type", "Module", "Submodule"];
-      const rows = testCasesList.map(t => [
+      let testCasesList = allModuleTestCases.length > 0 ? allModuleTestCases : testCases;
+
+      // If local list is empty, fetch all test cases for the project
+      if (!testCasesList || testCasesList.length === 0) {
+        try {
+          const fetched = await getTestCasesByProject(selectedProjectId);
+          if (Array.isArray(fetched) && fetched.length > 0) {
+            testCasesList = fetched as any[];
+          }
+        } catch (e) {
+          console.error("Failed to fetch all test cases for export:", e);
+        }
+      }
+
+      if (!testCasesList || testCasesList.length === 0) {
+        showAlert("No test cases available to export for this project.");
+        return;
+      }
+
+      const headers = [
+        "Test Case No",
+        "Description",
+        "Steps",
+        "Severity",
+        "Defect Type",
+        "Module",
+        "Sub Module",
+      ];
+
+      const rows = testCasesList.map((t: any) => [
         t.no || t.testcaseNo || `TC-${t.id}`,
-        `"${(t.description || '').replace(/"/g, '""')}"`,
-        t.severity || 'Medium',
-        t.type || 'Functional Bug',
-        t.module || 'Module',
-        t.subModule || 'Submodule',
+        t.description || t.name || "",
+        t.steps || t.detailsSteps || "",
+        t.severity || "Medium",
+        t.type || "Functional Bug",
+        t.module || t.moduleName || "",
+        t.subModule || t.subModuleName || "",
       ]);
 
-      const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `testcases_project_${selectedProjectId}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const wsData = [headers, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      // Set auto column widths
+      const colWidths = headers.map((header, colIndex) => {
+        let maxLen = header.length;
+        rows.forEach((row) => {
+          const val = row[colIndex] ? String(row[colIndex]) : "";
+          if (val.length > maxLen) maxLen = val.length;
+        });
+        return { wch: Math.min(Math.max(maxLen + 3, 12), 60) };
+      });
+      ws["!cols"] = colWidths;
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "TestCases");
+      XLSX.writeFile(wb, `testcases_project_${selectedProjectId}.xlsx`);
+
       showAlert("✅ Test cases exported successfully!");
     } catch (error: any) {
-      showAlert("Failed to export test cases.");
+      console.error("Export error:", error);
+      showAlert("Failed to export test cases: " + (error?.message || error));
     } finally {
       setIsExporting(false);
     }
@@ -2597,7 +2652,7 @@ export const TestCase: React.FC = () => {
           setIsViewStepsModalOpen(false);
           setViewingTestCase(null);
         }}
-        title={`Test Step - ${viewingTestCase?.testcaseNo ? (viewingTestCase.testcaseNo) : "N/A"}`}
+        title={`Test Step - ${formatTestCaseId(viewingTestCase)}`}
       >
         <div className="space-y-4">
           <div className="bg-gray-50 rounded-lg p-4">
@@ -2627,7 +2682,7 @@ export const TestCase: React.FC = () => {
           setIsViewTestCaseModalOpen(false);
           setViewingTestCase(null);
         }}
-        title={`Test Case Details - ${(viewingTestCase?.testcaseNo)}`}
+        title={`Test Case Details - ${formatTestCaseId(viewingTestCase)}`}
         size="xl"
       >
         {viewingTestCase && (

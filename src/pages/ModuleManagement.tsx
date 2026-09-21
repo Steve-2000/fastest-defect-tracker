@@ -157,11 +157,15 @@ export const ModuleManagement: React.FC = () => {
   };
 
   const isQaUser = (dev: { roleName?: string; roleType?: string; userWithRole?: string; roleId?: number }) => {
+    if (dev.roleId && moduleLeaderRoleIds.includes(dev.roleId)) {
+      return true;
+    }
+
     const roleName = String(dev.roleName || "").toUpperCase();
     const roleType = String(dev.roleType || "").toUpperCase();
     const userWithRole = String(dev.userWithRole || "").toUpperCase();
 
-    if (
+    return (
       roleType.includes("QA") ||
       roleType.includes("TEST") ||
       roleType.includes("QUALITY") ||
@@ -171,46 +175,39 @@ export const ModuleManagement: React.FC = () => {
       userWithRole.includes("QA") ||
       userWithRole.includes("TEST") ||
       userWithRole.includes("QUALITY")
-    ) {
-      return true;
-    }
-
-    if (dev.roleId && moduleLeaderRoleIds.includes(dev.roleId)) {
-      return true;
-    }
-
-    return false;
+    );
   };
 
   const isDevUser = (dev: { roleName?: string; roleType?: string; userWithRole?: string; roleId?: number }) => {
+    // QA users (QA Lead, QA Engineer, etc.) can NEVER be allocated as developers
     if (isQaUser(dev)) {
       return false;
-    }
-
-    const roleName = String(dev.roleName || "").toUpperCase();
-    const roleType = String(dev.roleType || "").toUpperCase();
-    const userWithRole = String(dev.userWithRole || "").toUpperCase();
-
-    if (
-      roleType.includes("DEV") ||
-      roleType.includes("ENGINEER") ||
-      roleType.includes("SOFTWARE") ||
-      roleName.includes("DEV") ||
-      roleName.includes("ENGINEER") ||
-      roleName.includes("SOFTWARE") ||
-      roleName.includes("PROGRAMMER") ||
-      userWithRole.includes("DEV") ||
-      userWithRole.includes("ENGINEER") ||
-      userWithRole.includes("SOFTWARE")
-    ) {
-      return true;
     }
 
     if (dev.roleId && developerRoleIds.includes(dev.roleId)) {
       return true;
     }
 
-    return true;
+    const roleName = String(dev.roleName || "").toUpperCase();
+    const roleType = String(dev.roleType || "").toUpperCase();
+    const userWithRole = String(dev.userWithRole || "").toUpperCase();
+
+    // Dev roles: Dev Lead, Developer, Senior Developer, Junior Developer, Software Engineer, Programmer, etc.
+    return (
+      roleType.includes("DEV") ||
+      roleType.includes("PROGRAMMER") ||
+      roleName.includes("DEV") ||
+      roleName.includes("DEVELOPER") ||
+      roleName.includes("PROGRAMMER") ||
+      roleName.includes("SOFTWARE") ||
+      (roleName.includes("ENGINEER") && !roleName.includes("QA")) ||
+      (roleType.includes("ENGINEER") && !roleType.includes("QA")) ||
+      userWithRole.includes("DEV") ||
+      userWithRole.includes("DEVELOPER") ||
+      userWithRole.includes("PROGRAMMER") ||
+      userWithRole.includes("SOFTWARE") ||
+      (userWithRole.includes("ENGINEER") && !userWithRole.includes("QA"))
+    );
   };
 
   const getRoleTypedDevelopers = () => {
@@ -887,7 +884,9 @@ export const ModuleManagement: React.FC = () => {
         console.error("Error creating module:", error);
         let errorMessage = "Failed to add module. Please try again.";
 
-        if (error.response?.data?.message) {
+        if (error.response?.data?.statusMessage) {
+          errorMessage = error.response.data.statusMessage;
+        } else if (error.response?.data?.message) {
           errorMessage = error.response.data.message;
         } else if (error.response?.data?.error) {
           errorMessage = error.response.data.error;
@@ -984,27 +983,18 @@ export const ModuleManagement: React.FC = () => {
       } catch (error: any) {
         console.error("Error updating module:", error);
 
-        if (error.response?.data?.message) {
-          // Use the exact message from API response
-          setToastMessage(error.response.data.message);
-          setShowToast(true);
+        const msg =
+          error.response?.data?.statusMessage ||
+          error.response?.data?.message ||
+          "Failed to update module. Please try again.";
+        setToastMessage(msg);
+        setShowToast(true);
 
-          // Auto-close notification after 5 seconds
-          setTimeout(() => {
-            setShowToast(false);
-            setToastMessage(null);
-          }, 5000);
-        } else {
-          // Generic error
-          setToastMessage("Failed to update module. Please try again.");
-          setShowToast(true);
-
-          // Auto-close notification after 5 seconds
-          setTimeout(() => {
-            setShowToast(false);
-            setToastMessage(null);
-          }, 5000);
-        }
+        // Auto-close notification after 5 seconds
+        setTimeout(() => {
+          setShowToast(false);
+          setToastMessage(null);
+        }, 5000);
       } finally {
         setIsUpdatingModule(false);
       }
@@ -1050,12 +1040,12 @@ export const ModuleManagement: React.FC = () => {
           }, 5000);
         }
       } catch (error: any) {
-        const backendMessage = error.response?.data?.message || error.message;
-        if (backendMessage) {
-          setToastMessage(backendMessage);
-        } else {
-          setToastMessage("Failed to update submodule. Please try again.");
-        }
+        const backendMessage =
+          error.response?.data?.statusMessage ||
+          error.response?.data?.message ||
+          error.message ||
+          "Failed to update submodule. Please try again.";
+        setToastMessage(backendMessage);
         setShowToast(true);
         setTimeout(() => {
           setShowToast(false);
@@ -1094,21 +1084,16 @@ export const ModuleManagement: React.FC = () => {
           }, 5000);
         }
       } catch (error: any) {
-        if (error.response?.data?.message) {
-          setToastMessage(error.response.data.message);
-          setShowToast(true);
-          setTimeout(() => {
-            setShowToast(false);
-            setToastMessage(null);
-          }, 5000);
-        } else {
-          setToastMessage("Failed to add submodule. Please try again.");
-          setShowToast(true);
-          setTimeout(() => {
-            setShowToast(false);
-            setToastMessage(null);
-          }, 5000);
-        }
+        const msg =
+          error.response?.data?.statusMessage ||
+          error.response?.data?.message ||
+          "Failed to add submodule. Please try again.";
+        setToastMessage(msg);
+        setShowToast(true);
+        setTimeout(() => {
+          setShowToast(false);
+          setToastMessage(null);
+        }, 5000);
       } finally {
         setIsCreatingSubmodule(false);
       }
@@ -1703,14 +1688,16 @@ export const ModuleManagement: React.FC = () => {
               });
               didAllocate = true;
             } catch (error: any) {
-              if (error.response?.data?.message) {
-                setToastMessage(error.response.data.message);
-              } else {
-                setToastMessage(
-                  "Failed to allocate module leader. Please try again.",
-                );
-              }
+              const errorMessage =
+                error.response?.data?.statusMessage ||
+                error.response?.data?.message ||
+                "Failed to allocate module leader. Please try again.";
+              setToastMessage(errorMessage);
               setShowToast(true);
+              setTimeout(() => {
+                setShowToast(false);
+                setToastMessage(null);
+              }, 5000);
               return;
             }
           }
@@ -1857,9 +1844,16 @@ export const ModuleManagement: React.FC = () => {
                   `Submodule allocation error for ${submoduleName}:`,
                   error,
                 );
-                const msg = error?.response?.data?.message || "Failed to allocate developer to submodule.";
+                const msg =
+                  error?.response?.data?.statusMessage ||
+                  error?.response?.data?.message ||
+                  "Failed to allocate developer to submodule.";
                 setToastMessage(msg);
                 setShowToast(true);
+                setTimeout(() => {
+                  setShowToast(false);
+                  setToastMessage(null);
+                }, 5000);
               }
             }
           }
@@ -2388,15 +2382,38 @@ export const ModuleManagement: React.FC = () => {
         const qaRoles = (allRoles || []).filter((r: any) => {
           const name = String(r.name || "").toUpperCase();
           const type = String(r.type || "").toUpperCase();
-          return name.includes("QA") || name.includes("TEST") || name.includes("QUALITY") || type.includes("QA") || type.includes("TEST");
+          return (
+            name.includes("QA") ||
+            name.includes("TEST") ||
+            name.includes("QUALITY") ||
+            type.includes("QA") ||
+            type.includes("TEST") ||
+            type.includes("QUALITY")
+          );
         });
 
         const devRoles = (allRoles || []).filter((r: any) => {
           const name = String(r.name || "").toUpperCase();
           const type = String(r.type || "").toUpperCase();
+          const isQa =
+            name.includes("QA") ||
+            name.includes("TEST") ||
+            name.includes("QUALITY") ||
+            type.includes("QA") ||
+            type.includes("TEST") ||
+            type.includes("QUALITY");
+          if (isQa) return false;
           return (
-            (name.includes("DEV") || name.includes("ENGINEER") || name.includes("SOFTWARE") || type.includes("DEV") || type.includes("ENGINEER")) &&
-            !name.includes("QA") && !type.includes("QA")
+            name.includes("DEV") ||
+            name.includes("DEVELOPER") ||
+            name.includes("ENGINEER") ||
+            name.includes("SOFTWARE") ||
+            name.includes("PROGRAMMER") ||
+            type.includes("DEV") ||
+            type.includes("DEVELOPER") ||
+            type.includes("ENGINEER") ||
+            type.includes("PROGRAMMER") ||
+            type.includes("SOFTWARE")
           );
         });
 
@@ -3728,7 +3745,7 @@ export const ModuleManagement: React.FC = () => {
             {onlyModulesSelected && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Developer for Module Allocation
+                  Select QA for Module Allocation
                 </label>
                 <div className="max-h-60 overflow-y-auto space-y-2">
                   {getRoleTypedModuleLeaders().length > 0 ? (

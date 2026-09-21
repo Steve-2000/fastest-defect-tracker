@@ -372,7 +372,9 @@ export const Header: React.FC = () => {
                   <User className="w-4 h-4 text-white" />
                 </div>
                 <div className="text-left hidden sm:block">
-                  <p className="text-sm font-semibold text-gray-900">{user?.email?.split('@')[0]}</p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {[user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.name || user?.email?.split('@')[0]}
+                  </p>
                 </div>
               </div>
                   <Button

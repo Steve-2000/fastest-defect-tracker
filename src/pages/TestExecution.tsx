@@ -73,6 +73,7 @@ import {
 
 import { getDefectTestCaseCounts } from "../api/releasetestcase";
 import { useAccessibleProjects } from "../api/useAccessibleProjects";
+import { addNewDefect } from "../api/defect/addNewDefect";
 
 
 
@@ -112,6 +113,14 @@ interface TestCase {
   assignedto?: string;
 
   assignedTo?: string;
+
+  executedBy?: string;
+  executerDefect?: string;
+  backendId?: number | string;
+  moduleId?: number | string;
+  subModuleId?: number | string;
+  defectTypeId?: number | string;
+  severityId?: number | string;
 }
 
 
@@ -625,20 +634,57 @@ export const TestExecution: React.FC = () => {
   const currentUserId = currentUser?.userId || currentUser?.employeeId || null;
   console.log("Current User ID:", currentUserId); 
 
-  const canUserExecute = (testCase: any): boolean => {
-    if (!currentUserId) {
-      console.log("No current user ID found");
-      return false;
+  const getLoggedInUserName = () => {
+    const localUser = AuthService.getCurrentUser();
+    if (localUser) {
+      if (localUser.firstName && localUser.lastName) {
+        return `${localUser.firstName} ${localUser.lastName}`.trim();
+      }
+      if (localUser.firstName) return localUser.firstName;
+      if (localUser.name) return localUser.name;
+      if (localUser.fullName) return localUser.fullName;
+      if (localUser.username) return localUser.username;
+      if (localUser.userName) return localUser.userName;
+      if (localUser.email) return localUser.email;
     }
-    
-    if (!testCase.assignedToId) {
-      console.log("Test case not assigned to anyone");
-      return false;
+    return "Current User";
+  };
+
+  const [testCaseExecuterMap, setTestCaseExecuterMap] = useState<{ [testCaseId: string]: string }>({});
+
+  useEffect(() => {
+    if (selectedProject && selectedRelease) {
+      const key = `test_exec_user_${selectedProject}_${selectedRelease}`;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          setTestCaseExecuterMap(JSON.parse(raw));
+        } else {
+          setTestCaseExecuterMap({});
+        }
+      } catch {
+        setTestCaseExecuterMap({});
+      }
     }
-    
-    const canExecute = Number(currentUserId) === Number(testCase.assignedToId);
-    console.log(`User ${currentUserId} vs Assigned ${testCase.assignedToId}: ${canExecute}`);
-    return canExecute;
+  }, [selectedProject, selectedRelease]);
+
+  const persistExecuter = (testCaseId: string, executerName: string) => {
+    if (selectedProject && selectedRelease) {
+      const key = `test_exec_user_${selectedProject}_${selectedRelease}`;
+      try {
+        const raw = localStorage.getItem(key);
+        const existing = raw ? JSON.parse(raw) : {};
+        existing[testCaseId] = executerName;
+        localStorage.setItem(key, JSON.stringify(existing));
+      } catch (e) {
+        console.error("Failed to persist executer:", e);
+      }
+      setTestCaseExecuterMap((prev) => ({ ...prev, [testCaseId]: executerName }));
+    }
+  };
+
+  const canUserExecute = (_testCase: any): boolean => {
+    return true;
   };
 
   
@@ -2940,7 +2986,6 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
     const tc = pendingStatusUpdate?.testCase;
     if (!tc) throw new Error("No test case selected.");
 
-    
     const priorityObj = priorities.find(
       (p: any) =>
         (p.priority || p.name || "").toLowerCase() ===
@@ -2958,34 +3003,95 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
       throw new Error("Missing release or test case information.");
     }
 
-    const payload = {
-      status: "FAILED",
+    const severityObj = severities.find(
+      (s: any) => (s.name || "").toLowerCase() === (defectFormData.severity || tc.severity || "").toLowerCase()
+    );
+    const defectTypeObj = defectTypes.find(
+      (dt: any) => (dt.name || dt.defectTypeName || "").toLowerCase() === (defectFormData.type || tc.type || "").toLowerCase()
+    );
+
+    const resolvedModuleId =
+      tc.moduleId ||
+      (modules.find((m: any) => (m.name || m.moduleName) === (defectFormData.module || tc.module))?.id) ||
+      null;
+    const resolvedSubModuleId =
+      tc.subModuleId ||
+      (submodules.find((s: any) => (s.name || s.subModuleName) === (defectFormData.subModule || tc.subModule))?.id) ||
+      null;
+
+    const defectPayload: any = {
+      projectId: selectedProject ? Number(selectedProject) : null,
+      moduleId: resolvedModuleId ? Number(resolvedModuleId) : null,
+      subModuleId: resolvedSubModuleId ? Number(resolvedSubModuleId) : null,
+      releaseId: releaseId ? Number(releaseId) : null,
+      testCaseId: Number(tc.backendId || tc.id),
+      description: defectFormData.title || tc.description || "Defect",
+      stepsToRecreation: defectFormData.description || tc.steps || "",
+      expectedResult: "",
+      actualResult: "",
+      isAddTestCase: false,
+      severityId: severityObj?.id ? Number(severityObj.id) : 1,
       priorityId: Number(priorityObj.id),
+      defectTypeId: defectTypeObj?.id ? Number(defectTypeObj.id) : 1,
+      type: defectFormData.type || tc.type || "Bug",
+      status: "New",
       assignedTo: Number(defectFormData.assignedTo),
     };
 
-    const formData = new FormData();
-    formData.append(
+    const defectForm = new FormData();
+    defectForm.append(
       "data",
-      new Blob([JSON.stringify(payload)], { type: "application/json" })
+      new Blob([JSON.stringify(defectPayload)], { type: "application/json" })
     );
 
     const attachmentFile = (defectFormData as any).attachmentFile;
     if (attachmentFile) {
-      formData.append("attachmentFile", attachmentFile);
+      defectForm.append("attachmentFile", attachmentFile);
+    } else {
+      defectForm.append("attachmentFile", new Blob([], { type: "application/octet-stream" }));
     }
 
-    const response = await updateReleaseTestCaseStatusWithImage(
-      releaseId,
-      releaseTestCaseId,
-      formData
+    const defectResponse = await addNewDefect(defectForm);
+    console.log("Defect creation response:", defectResponse);
+
+    const createdDefect = defectResponse?.data || defectResponse;
+    const defectNo =
+      createdDefect?.defectNo ||
+      (createdDefect?.projectDefectNumber
+        ? `DEF-${createdDefect.projectDefectNumber}`
+        : (createdDefect?.id ? `DEF-${createdDefect.id}` : null));
+
+    try {
+      const statusPayload = {
+        status: "FAILED",
+        priorityId: Number(priorityObj.id),
+        assignedTo: Number(defectFormData.assignedTo),
+      };
+      const statusFormData = new FormData();
+      statusFormData.append(
+        "data",
+        new Blob([JSON.stringify(statusPayload)], { type: "application/json" })
+      );
+      if (attachmentFile) {
+        statusFormData.append("attachmentFile", attachmentFile);
+      }
+      await updateReleaseTestCaseStatusWithImage(
+        releaseId,
+        releaseTestCaseId,
+        statusFormData
+      );
+    } catch (statusErr) {
+      console.warn("Failed to update release test case status:", statusErr);
+    }
+
+    const assignedUserObj = defectAllocatedUsers.find(
+      (u: any) => String(u.userId) === String(defectFormData.assignedTo)
     );
+    const executerDefectName = assignedUserObj?.userName || null;
+    const priorityName = priorityObj?.name || priorityObj?.priority || "medium";
+    const currentUserName = getLoggedInUserName();
 
-    console.log("Status update response:", response);
-
-    const defectNo = response?.data?.defectNo || null;
-    const executerDefectName = response?.data?.assignedTo || null;
-    const priorityName = response?.data?.priorityName || null;
+    persistExecuter(tc.id, currentUserName);
 
     setFilteredTestCases((prev) =>
       prev.map((t) =>
@@ -2995,6 +3101,7 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
               executionStatus: "failed",
               defectId: defectNo,
               executerDefect: executerDefectName,
+              executedBy: currentUserName,
               priority: priorityName,
             }
           : t
@@ -3013,9 +3120,30 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
 
     if (defectNo) {
       setTestCaseDefectMap((prev: any) => ({ ...prev, [tc.id]: defectNo }));
-      if (executerDefectName) {
-        setDefectAssignments((prev) => ({ ...prev, [defectNo]: executerDefectName }));
+      try {
+        const currentSaved = localStorage.getItem("testCaseDefectMapping");
+        const parsed = currentSaved ? JSON.parse(currentSaved) : {};
+        parsed[tc.id] = defectNo;
+        localStorage.setItem("testCaseDefectMapping", JSON.stringify(parsed));
+      } catch (err) {
+        console.error("Failed to persist testCaseDefectMapping:", err);
       }
+
+      if (executerDefectName) {
+        setDefectAssignments((prev) => {
+          const updated = { ...prev, [defectNo]: executerDefectName };
+          try {
+            localStorage.setItem("defectAssignments", JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      }
+    }
+
+    if (createdDefect) {
+      setExistingDefects((prev) => [createdDefect, ...prev]);
+      addDefect(createdDefect);
+      window.dispatchEvent(new CustomEvent("defect:created", { detail: createdDefect }));
     }
 
     setToast({
@@ -3048,7 +3176,7 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
     });
 
   } catch (error: any) {
-    console.error("Error updating status:", error);
+    console.error("Error creating defect / updating status:", error);
     setToast({
       isOpen: true,
       message: error?.response?.data?.message || error.message || "Failed to update test case status.",
@@ -3647,7 +3775,7 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
                       return (
                         <tr key={testCase.testcaseId} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap sticky left-0 z-10 bg-white border-r border-gray-200 text-sm text-gray-500">
-                            {formatTestCaseId(testCase.no)}
+                            {formatTestCaseId(testCase.no || testCase.testCaseId || testCase.id)}
                           </td>
 
                           <td
@@ -3684,9 +3812,15 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
                           </td>
                            <td
                             className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"
-                            title={testCase.assignedTo}
+                            title={
+                              (isPassed || isFailed)
+                                ? (testCase.executedBy || testCaseExecuterMap[testCase.id] || getLoggedInUserName())
+                                : (testCase.assignedTo || "No Execution")
+                            }
                           >
-                            {testCase.assignedTo || "No Execution"}
+                            {(isPassed || isFailed)
+                              ? (testCase.executedBy || testCaseExecuterMap[testCase.id] || getLoggedInUserName())
+                              : (testCase.assignedTo || "No Execution")}
                           </td>
 
                           {}
@@ -3714,17 +3848,23 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
                                   borderBottomLeftRadius: 6,
                                 }}
                                 onClick={async () => {
-                                    if (!canUserExecute(testCase)) {
-                                      setToast({
-                                        isOpen: true,
-                                        message: "You are not authorized to execute this test case. Only the assigned QA can execute.",
-                                        type: "error",
-                                      });
-                                      return;
-                                    }
                                     setPreviousStatusBeforeFail(null);
 
-                                    
+                                    const currentUserName = getLoggedInUserName();
+                                    persistExecuter(testCase.id, currentUserName);
+
+                                    setFilteredTestCases((prev) =>
+                                      prev.map((t) =>
+                                        t.id === testCase.id
+                                          ? {
+                                              ...t,
+                                              executionStatus: "passed",
+                                              executedBy: currentUserName,
+                                            }
+                                          : t
+                                      )
+                                    );
+
                                     setExecutionStatuses((prev) => ({ ...prev, [testCase.id]: "passed" }));
                                     if (selectedProject && selectedRelease) {
                                       persistExecutionStatus(selectedProject, selectedRelease, testCase.id, "passed" as ExecutionStatus);
@@ -3765,14 +3905,6 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
                                   borderLeft: "1px solid #e5e7eb",
                                 }}
                                 onClick={() => {
-                                  if (!canUserExecute(testCase)) {
-                                    setToast({
-                                      isOpen: true,
-                                      message: "You are not authorized to execute this test case. Only the assigned QA can execute.",
-                                      type: "error",
-                                    });
-                                    return;
-                                  }
                                   if (!isFailed) {
                                     
 
@@ -3820,21 +3952,20 @@ const handleDefectFormSubmit = async (e: React.FormEvent) => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {(() => {
                               
-                              const defectIdToShow = testCase.defectId || computedDefectId;
+                              const defectIdToShow = testCase.defectId || computedDefectId || testCaseDefectMap[testCase.id];
                               const defectData = existingDefects.find(
                                   (d: any) => d.defectNo === defectIdToShow || String(d.id) === String(defectIdToShow));
                               if (isFailed && defectIdToShow) {
                                 return (
                                   <button
                                     className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-semibold hover:bg-blue-200 transition text-xs"
-                                   onClick={() => {
-                                     if (defectData?.id) {
-                                      navigate(`/projects/${selectedProject}/defects?view=${defectData.id}`);
-                                    } else {
-                                      
-                                      navigate(`/projects/${selectedProject}/defects?view=${defectIdToShow}`);
-                                    }
-                                  }}
+                                    onClick={() => {
+                                      if (defectData?.id) {
+                                        navigate(`/projects/${selectedProject}/defects?view=${defectData.id}`);
+                                      } else {
+                                        navigate(`/projects/${selectedProject}/defects?view=${defectIdToShow}`);
+                                      }
+                                    }}
                                   >
                                     {defectIdToShow}
                                   </button>

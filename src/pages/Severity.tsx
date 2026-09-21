@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -108,12 +108,13 @@ const Severity: React.FC = () => {
 
   useEffect(() => {
     if (isCreateModalOpen) {
-      const isValidHex = /^#[0-9A-Fa-f]{6}$/.test(formData.color);
-    if (!isValidHex) {
-      setColorError('');
-      return;
-    }
-      const isDuplicate = severities.some(s => (s.color || "").toLowerCase() === formData.color.toLowerCase());
+      const isValidHex = /^#[0-9A-Fa-f]{6}$/.test(formData.color || "");
+      if (!isValidHex) {
+        setColorError('');
+        return;
+      }
+      const formColor = (formData.color || "").toLowerCase();
+      const isDuplicate = formColor ? severities.some(s => (s.color || "").toLowerCase() === formColor) : false;
       setColorError(isDuplicate ? 'This color is already in use. Please choose a different color.' : '');
     } else {
       setColorError('');
@@ -217,9 +218,14 @@ const Severity: React.FC = () => {
   if (!editingSeverity) return;
 
   // No changes check
+  const currentName = (formData.name || "").trim();
+  const editingName = (editingSeverity.name || "").trim();
+  const currentColor = (formData.color || "").toLowerCase();
+  const editingColor = (editingSeverity.color || "").toLowerCase();
+
   if (
-    formData.name.trim() === editingSeverity.name.trim() &&
-    formData.color.toLowerCase() === editingSeverity.color.toLowerCase() &&
+    currentName === editingName &&
+    currentColor === editingColor &&
     formData.weight === editingSeverity.weight
   ) {
     showToast(
@@ -258,12 +264,12 @@ const Severity: React.FC = () => {
   // }
 
   // Duplicate color check
-  const isDuplicateColor = severities.some(
+  const formColor = (formData.color || "").toLowerCase();
+  const isDuplicateColor = formColor ? severities.some(
     s =>
-      (s.color || "").toLowerCase() ===
-        formData.color.toLowerCase() &&
+      (s.color || "").toLowerCase() === formColor &&
       s.id !== editingSeverity.id
-  );
+  ) : false;
 
   if (isDuplicateColor) {
     showToast(
@@ -366,7 +372,7 @@ const Severity: React.FC = () => {
 
   const openEditModal = (severity: SeverityType) => {
     setEditingSeverity(severity);
-    setFormData({ name: severity.name, color: severity.color, weight: severity.weight });
+    setFormData({ name: severity.name || "", color: severity.color || "#000000", weight: severity.weight ?? 1 });
     setIsEditModalOpen(true);
   };
 

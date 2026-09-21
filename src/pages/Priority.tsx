@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -101,11 +101,14 @@ const Priority: React.FC = () => {
 
   useEffect(() => {
     if (isCreateModalOpen || isEditModalOpen) {
-      const isDuplicate = priorities.some(
-        (p) =>
-          (p.color || "").toLowerCase() === formData.color.toLowerCase() &&
-          (!editingPriority || p.id !== editingPriority.id),
-      );
+      const formColor = (formData?.color || "").trim().toLowerCase();
+      const isDuplicate = formColor
+        ? priorities.some(
+            (p) =>
+              (p.color || "").trim().toLowerCase() === formColor &&
+              (!editingPriority || p.id !== editingPriority.id),
+          )
+        : false;
       setColorError(
         isDuplicate
           ? "This color is already in use. Please choose a different color."
@@ -189,9 +192,14 @@ const Priority: React.FC = () => {
 
   const handleEdit = async () => {
     if (!editingPriority) return;
+    const currentName = (formData?.name || "").trim();
+    const editingName = (editingPriority?.name || "").trim();
+    const currentColor = (formData?.color || "").trim().toLowerCase();
+    const editingColor = (editingPriority?.color || "").trim().toLowerCase();
+
     if (
-      formData.name.trim() === editingPriority.name.trim() &&
-      formData.color.toLowerCase() === (editingPriority.color || "").toLowerCase()
+      currentName === editingName &&
+      currentColor === editingColor
     ) {
       showToast("No changes were made to the priority", "error");
       return;
@@ -229,24 +237,17 @@ const Priority: React.FC = () => {
 
 
     try {
-      const normalizedColor = normalizeColor(formData.color);
+      const normalizedColor = normalizeColor(formData?.color || "#000000");
       const result = await updatePriority(editingPriority.id, {
-        name: formData.name,
+        name: (formData?.name || "").trim(),
         color: normalizedColor,
       });
-
-
-
-
-
-
-
 
       await fetchPriorities(currentPage - 1, pageSize);
       setIsEditModalOpen(false);
       setEditingPriority(null);
       resetForm();
-      const successMsg = "Priority " + result.statusMessage || "Priority updated successfully!";
+      const successMsg = "Priority " + (result?.statusMessage || "updated successfully!");
       showToast(successMsg, "success");
 
     } catch (error: any) {
@@ -276,7 +277,7 @@ const Priority: React.FC = () => {
 
   const openEditModal = (priority: Priority) => {
     setEditingPriority(priority);
-    setFormData({ name: priority.name, color: priority.color });
+    setFormData({ name: priority.name || "", color: priority.color || "#000000" });
     setIsEditModalOpen(true);
   };
   const openDeleteModal = (priority: Priority) => {
@@ -349,10 +350,16 @@ const Priority: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <div
                           className="w-4 h-4 rounded-full border border-gray-300"
-                          style={{ backgroundColor: priority.color }}
+                          style={{
+                            backgroundColor: priority.color
+                              ? priority.color.startsWith("#")
+                                ? priority.color
+                                : "#" + priority.color
+                              : "#6B7280",
+                          }}
                         />
                         <span className="text-sm text-gray-600">
-                          {priority.color}
+                          {priority.color || "No color"}
                         </span>
                       </div>
                     </TableCell>

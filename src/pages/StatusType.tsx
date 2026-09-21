@@ -101,11 +101,12 @@ const [loading, setLoading] = useState(false);
   
   useEffect(() => {
     if (isCreateModalOpen || isEditModalOpen) {
-      const isDuplicate = statusTypes.some(
+      const formColor = (formData.color || "").toLowerCase();
+      const isDuplicate = formColor ? statusTypes.some(
         (s) =>
-          s.color.toLowerCase() === formData.color.toLowerCase() &&
+          (s.color || "").toLowerCase() === formColor &&
           (!editingStatus || s.id !== editingStatus.id),
-      );
+      ) : false;
       if (isDuplicate) {
         setColorError(
           "This color is already in use. Please choose a different color.",
@@ -204,9 +205,14 @@ const [loading, setLoading] = useState(false);
 const handleEdit = async () => {
   if (!editingStatus) return;
 
+const currentName = (formData.name || "").trim();
+const editingName = (editingStatus.name || "").trim();
+const currentColor = (formData.color || "").toLowerCase();
+const editingColor = (editingStatus.color || "").toLowerCase();
+
 if (
-  formData.name.trim() === editingStatus.name.trim() &&
-  formData.color.toLowerCase() === editingStatus.color.toLowerCase() &&
+  currentName === editingName &&
+  currentColor === editingColor &&
   formData.type === editingStatus.type    
 ) {
   showToast("No changes were made to the status type", "error");
@@ -268,10 +274,20 @@ if (
 
   const openEditModal = (status: DefectStatus) => {
     setEditingStatus(status);
+    let resolvedType = status.type || "";
+    if (!resolvedType && status.name) {
+      const match = STATUS_TYPES.find(
+        (st) =>
+          st.value === status.name.toUpperCase() ||
+          st.label.toUpperCase() === status.name.toUpperCase() ||
+          status.name.toUpperCase().includes(st.value)
+      );
+      if (match) resolvedType = match.value;
+    }
     setFormData({
       name: status.name,
       color: normalizeColor(status.color),
-      type: status.type,
+      type: resolvedType,
     });
     setIsEditModalOpen(true);
   };
@@ -367,8 +383,13 @@ const handleStatusNameInput = (e: React.ChangeEvent<HTMLInputElement>) => {
                       <TableCell className="font-medium">{status.name}</TableCell>
                       <TableCell>
                         <div className="flex items-center">
-                          
-                          <span>{status.type}</span>
+                          <span className="inline-block px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                            {STATUS_TYPES.find((st) => st.value === status.type)?.label ||
+                             status.type ||
+                             STATUS_TYPES.find((st) => st.value === status.name?.toUpperCase() || status.name?.toUpperCase().includes(st.value))?.label ||
+                             status.name ||
+                             "-"}
+                          </span>
                         </div>
                       </TableCell>
                       <TableCell>

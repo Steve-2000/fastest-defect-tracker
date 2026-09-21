@@ -1,4 +1,13 @@
-﻿import apiClient from "../../lib/api";
+import apiClient from "../../lib/api";
 import { ENDPOINTS } from "../../utils/apiendpoint";
-export const getDefectReopened = async (projectId: number) => { try { const r = await apiClient.get(ENDPOINTS.dashboardReopenedByProject(projectId)); return r.data.data??[]; } catch { return []; } };
+
+export const getDefectReopened = async (projectId: number | string) => {
+  try {
+    const r = await apiClient.get(ENDPOINTS.dashboardReopenedByProject(Number(projectId)));
+    return r.data;
+  } catch {
+    return { data: [] };
+  }
+};
+
 export const getReopenCountSummary = getDefectReopened;

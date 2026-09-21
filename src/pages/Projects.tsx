@@ -32,6 +32,8 @@ import {
 import { getAllDesignations } from "../api/designation/designation";
 import { usePermission } from "../context/PermissionContext";
 import { getAvailableManagers, getAvailableManagersForUpdate, AvailableManager } from "../api/projectget";
+import apiClient from "../lib/api";
+import { ENDPOINTS } from "../utils/apiendpoint";
 import { OrbitProgress } from "react-loading-indicators";
 
 interface LocalProject {
@@ -357,13 +359,20 @@ const handleAllocateManager = async () => {
       status: project.status as LocalProject["status"],
       startDate: project.startDate || "",
       endDate: project.endDate || "",
-      projectManagerName: project.projectManagerName,
+      projectManagerName: project.projectManagerName || project.manager?.name || "",
       managerId: project.projectManagerId
         ? String(project.projectManagerId)
-        : "",
-      projectManagerDesignationId: project.projectManagerDesignationId
-        ? Number(project.projectManagerDesignationId)
-        : undefined,
+        : project.manager?.id
+          ? String(project.manager.id)
+          : "",
+      projectManagerDesignationId:
+        project.projectManagerDesignationId !== undefined && project.projectManagerDesignationId !== null
+          ? Number(project.projectManagerDesignationId)
+          : project.manager?.designation?.id !== undefined && project.manager?.designation?.id !== null
+            ? Number(project.manager.designation.id)
+            : project.manager?.designationId !== undefined && project.manager?.designationId !== null
+              ? Number(project.manager.designationId)
+              : undefined,
       clientName: project.clientName || "",
       clientCountry: project.clientCountry || "",
       clientState: project.clientState || "",
@@ -371,9 +380,10 @@ const handleAllocateManager = async () => {
       clientPhone: project.clientPhone || "",
       address: project.address || "",
       description: project.description || "",
-      managerAllocation: project.managerAllocation
-        ? Number(project.managerAllocation)
-        : undefined,
+      managerAllocation:
+        project.managerAllocation !== undefined && project.managerAllocation !== null
+          ? Number(project.managerAllocation)
+          : undefined,
     }));
 
     if (isAdmin) {
@@ -508,26 +518,47 @@ const handleAllocateManager = async () => {
   };
 
   const handleEdit = async (project: LocalProject) => {
-    setEditingProject(project);
+    // Reset all transient state first
     setShowAllocationPopup(false);
     setAllocatingManagerId("");
-    setAllocatingManagerName("");
+    setAllocatingManagerName(project.projectManagerName || "");
     setAllocatingManagerDesignation("");
     setAllocationPercentage(0);
-    // Load current PM's existing allocation for this project
     setCurrentPmAllocation(project.managerAllocation ?? 0);
-    // Show allocation update field immediately when edit modal opens
     setIsUpdatingAllocation(true);
-    setAllocatingManagerName(project.projectManagerName || "");
-    
+
+    // Ensure designations are loaded
     if (designations.length === 0) {
       await loadDesignations();
     }
 
-    const desId = project.projectManagerDesignationId
+    let desId = project.projectManagerDesignationId
       ? String(project.projectManagerDesignationId)
       : "";
+    let pmId = project.managerId ? String(project.managerId) : "";
+    let pmName = project.projectManagerName || "";
 
+    // Fallback: If desId is missing but we have pmId, fetch the employee to get their designation
+    if (!desId && pmId) {
+      try {
+        const empRes = await apiClient.get(ENDPOINTS.employeeById(Number(pmId)));
+        const empData = empRes?.data?.data ?? empRes?.data;
+        if (empData) {
+          if (empData.designation?.id) {
+            desId = String(empData.designation.id);
+          } else if (empData.designationId) {
+            desId = String(empData.designationId);
+          }
+          if (!pmName && empData.name) {
+            pmName = empData.name;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch PM employee details:", err);
+      }
+    }
+
+    // Pre-populate ALL form fields including designation and manager
     setFormData({
       name: project.name,
       prefix: project.prefix,
@@ -536,8 +567,8 @@ const handleAllocateManager = async () => {
       startDate: project.startDate,
       endDate: project.endDate,
       designationId: desId,
-      projectManagerId: project.managerId || "",
-      projectManagerName: project.projectManagerName,
+      projectManagerId: pmId,
+      projectManagerName: pmName,
       clientName: project.clientName,
       clientCountry: project.clientCountry,
       clientState: project.clientState,
@@ -546,29 +577,58 @@ const handleAllocateManager = async () => {
       address: project.address,
       description: project.description,
       managerAllocation: project.managerAllocation
-  ? String(project.managerAllocation)
-  : "",
+        ? String(project.managerAllocation)
+        : "",
     });
-if (desId) {
+
+    // Load the managers for the current designation so the PM dropdown is populated
+    if (desId) {
       try {
         const managers = await getAvailableManagersForUpdate(
           Number(desId),
           Number(project.id)
         );
-        // Always include the current PM even if they're at 100% (they're already in this project)
+
+        // Always ensure the current PM is in the list (they may be at 100% but still valid)
         const currentPmInList = managers.find(
-          (m) => String(m.employeeId) === String(project.managerId)
+          (m) => String(m.employeeId) === String(pmId)
         );
-        if (!currentPmInList && project.managerId) {
-          // Fetch current PM separately to show in dropdown
+        if (!currentPmInList && pmId) {
           try {
             const allManagers = await getAvailableManagers(Number(desId));
             const currentPm = allManagers.find(
-              (m) => String(m.employeeId) === String(project.managerId)
+              (m) => String(m.employeeId) === String(pmId)
             );
-            if (currentPm) managers.unshift(currentPm);
-          } catch {}
+            if (currentPm) {
+              managers.unshift(currentPm);
+            } else if (pmName) {
+              managers.unshift({
+                employeeId: Number(pmId),
+                firstName: pmName.split(" ")[0] || pmName,
+                lastName: pmName.split(" ").slice(1).join(" ") || "",
+                email: "",
+                designationId: Number(desId),
+                designationName: "",
+                availabilityPercent: 100,
+                isActive: true,
+              });
+            }
+          } catch {
+            if (pmName) {
+              managers.unshift({
+                employeeId: Number(pmId),
+                firstName: pmName.split(" ")[0] || pmName,
+                lastName: pmName.split(" ").slice(1).join(" ") || "",
+                email: "",
+                designationId: Number(desId),
+                designationName: "",
+                availabilityPercent: 100,
+                isActive: true,
+              });
+            }
+          }
         }
+        // Set users BEFORE opening the modal so the selected value renders correctly
         setUsers(managers);
       } catch (err) {
         console.error("Failed to load available managers:", err);
@@ -576,6 +636,8 @@ if (desId) {
       }
     }
 
+    // Open the modal only after everything is ready — prevents blank dropdown flash
+    setEditingProject(project);
     setIsModalOpen(true);
   };
 
@@ -608,12 +670,30 @@ const isFormChanged = (): boolean => {
   };
 
   const handleDeleteClick = (project: LocalProject) => {
+    if (project.status !== "Completed") {
+      setToast({
+        isOpen: true,
+        message: "Only completed projects can be deleted. Projects in Active or On Hold status cannot be deleted.",
+        type: "error",
+      });
+      return;
+    }
     setDeleteConfirmProject(project);
     setShowDeleteConfirm(true);
   };
 
   const confirmDelete = async () => {
     if (!deleteConfirmProject) return;
+    if (deleteConfirmProject.status !== "Completed") {
+      setToast({
+        isOpen: true,
+        message: "Only completed projects can be deleted. Projects in Active or On Hold status cannot be deleted.",
+        type: "error",
+      });
+      setShowDeleteConfirm(false);
+      setDeleteConfirmProject(null);
+      return;
+    }
     try {
       const response = await deleteProject(deleteConfirmProject.id);
       if (
@@ -794,14 +874,28 @@ const isFormChanged = (): boolean => {
                     {can.project.delete && (
                       <button
                         type="button"
-                        className="absolute bottom-4 right-4 bg-white rounded-full p-1 shadow hover:bg-red-100 z-10"
+                        className={`absolute bottom-4 right-4 bg-white rounded-full p-1 shadow z-10 ${
+                          project.status === "Completed"
+                            ? "hover:bg-red-100 cursor-pointer"
+                            : "opacity-40 cursor-not-allowed"
+                        }`}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteClick(project);
                         }}
-                        title="Delete Project"
+                        title={
+                          project.status === "Completed"
+                            ? "Delete Project"
+                            : "Only completed projects can be deleted"
+                        }
                       >
-                        <Trash2 className="w-5 h-5 text-red-500" />
+                        <Trash2
+                          className={`w-5 h-5 ${
+                            project.status === "Completed"
+                              ? "text-red-500"
+                              : "text-gray-400"
+                          }`}
+                        />
                       </button>
                     )}
                   </>
@@ -1010,7 +1104,7 @@ const isFormChanged = (): boolean => {
               </div>
             </div>
 
-            {}
+            {/* Designation & Project Manager */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1024,7 +1118,7 @@ const isFormChanged = (): boolean => {
                 >
                   <option value="">Select Designation</option>
                   {designations.map((designation) => (
-                    <option key={designation.id} value={designation.id}>
+                    <option key={designation.id} value={String(designation.id)}>
                       {designation.name}
                     </option>
                   ))}
@@ -1045,12 +1139,12 @@ const isFormChanged = (): boolean => {
                   {!formData.designationId ? (
                     <option value="">Select Designation First</option>
                   ) : users.length === 0 ? (
-                    <option value="">No Users Found</option>
+                    <option value="">Loading...</option>
                   ) : (
                     <>
                       <option value="">Select User</option>
                       {users.map((user) => (
-                        <option key={user.employeeId} value={user.employeeId}>
+                        <option key={user.employeeId} value={String(user.employeeId)}>
                           {`${user.firstName} ${user.lastName}`}
                         </option>
                       ))}
@@ -1058,9 +1152,9 @@ const isFormChanged = (): boolean => {
                   )}
                 </select>
               </div>
-</div>
+            </div>
 
-{/* Allocation row — shown after PM allocation is set, for both create and update flows */}
+            {/* Allocation row — shown after PM allocation is set, for both create and update flows */}
             {isUpdatingAllocation && formData.projectManagerId !== "" && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between gap-3">
                 <div>

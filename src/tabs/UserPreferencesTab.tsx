@@ -56,7 +56,13 @@ export const UserPreferencesTab: React.FC = () => {
     setLoading(true);
     try {
       const data = await getAllUsersSimple();
-      const userList = Array.isArray(data?.data?.content) ? data.data.content : [];
+      const userList = Array.isArray(data?.data?.content)
+        ? data.data.content
+        : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+        ? data
+        : [];
       setUsers(userList);
     } catch (error) {
       console.error("Error loading users:", error);
@@ -70,8 +76,10 @@ export const UserPreferencesTab: React.FC = () => {
   const loadEmailPoints = async () => {
     try {
       const pointsData = await getAllEmailPointSetups();
-      const filteredPoints = pointsData.filter((point: any) => {
-        return !IGNORED_TEMPLATES.includes(point.eventType);
+      const list = Array.isArray(pointsData) ? pointsData : (pointsData?.data || []);
+      const filteredPoints = list.filter((point: any) => {
+        const evType = point.eventType || point.key || point.eventName || "";
+        return !IGNORED_TEMPLATES.includes(evType);
       });
       setEmailPoints(filteredPoints);
     } catch {
@@ -84,9 +92,11 @@ export const UserPreferencesTab: React.FC = () => {
     try {
       
       const allocationsResponse = await getViewAllocations(user.id);
-      const allocations = allocationsResponse?.data?.availablePeriods || [];
+      const allocations = Array.isArray(allocationsResponse)
+        ? allocationsResponse
+        : (allocationsResponse?.data?.availablePeriods || allocationsResponse?.data || []);
       
-      const roles = [...new Map(allocations.map((alloc: any) => [alloc.roleId, alloc.roleName])).entries()]
+      const roles = [...new Map(allocations.map((alloc: any) => [alloc.roleId || alloc.role?.id, alloc.roleName || alloc.role?.name])).entries()]
         .filter(([id]) => id)
         .map(([id, name]) => ({ id: Number(id), name }));
       

@@ -93,26 +93,69 @@ useEffect(() => {
           historyData = response;
         }
 
-        const mappedHistory = historyData.map((item: any) => ({
-          userId: item.employeeId || item.userId || item.id,
-          allocations: [
-            {
-              id: item.id,
-              firstName: item.firstName || '',
-              lastName: item.lastName || '',
-              email: item.email || '',
-              roleName: item.roleName || '',
-              roleId: item.roleId,
-              percentage: item.allocationPercent || item.percentage || 0,
-              startDate: item.startDate,
-              endDate: item.endDate,
-              status: item.status ?? true,
-            },
-          ],
-          deallocations: [],
-        }));
+        const userMap = new Map<number, ProjectAllocationHistory>();
 
-        setAllocationHistory(mappedHistory);
+        historyData.forEach((item: any) => {
+          const emp = item.employee || {};
+          const role = item.role || {};
+          const project = item.project || {};
+
+          const empId = Number(emp.id || item.employeeId || item.userId || item.id);
+
+          let fullName = (item.userFullName || emp.name || emp.fullName || '').trim();
+          let firstName = (item.firstName || emp.firstName || '').trim();
+          let lastName = (item.lastName || emp.lastName || '').trim();
+
+          if (!fullName && (firstName || lastName)) {
+            fullName = `${firstName} ${lastName}`.trim();
+          } else if (fullName && (!firstName && !lastName)) {
+            const parts = fullName.split(' ');
+            firstName = parts[0] || '';
+            lastName = parts.slice(1).join(' ') || '';
+          } else if (!fullName) {
+            fullName = 'Unknown User';
+          }
+
+          const email = emp.email || item.email || '';
+          const roleName = role.name || role.roleName || item.roleName || 'Unassigned';
+          const roleId = role.id ?? item.roleId;
+          const percentage = Number(item.allocationPercentage ?? item.allocationPercent ?? item.percentage ?? 0);
+          const startDate = item.startDate ? String(item.startDate).split('T')[0] : '';
+          const endDate = item.endDate ? String(item.endDate).split('T')[0] : '';
+          const status = item.status !== undefined ? Boolean(item.status) : true;
+          const projectName = project.name || project.projectName || item.projectName || '';
+          const projectId = Number(project.id || item.projectId || selectedProjectId);
+
+          const record: AllocationRecord = {
+            id: item.id,
+            userFullName: fullName,
+            firstName,
+            lastName,
+            email,
+            roleName,
+            roleId,
+            percentage,
+            allocationPercentage: percentage,
+            startDate,
+            endDate,
+            projectId,
+            projectName,
+            userId: empId,
+            status,
+          };
+
+          if (!userMap.has(empId)) {
+            userMap.set(empId, {
+              userId: empId,
+              allocations: [record],
+              deallocations: [],
+            });
+          } else {
+            userMap.get(empId)!.allocations.push(record);
+          }
+        });
+
+        setAllocationHistory(Array.from(userMap.values()));
       })
       .catch(() => {
         setAllocationHistory([]);
@@ -207,6 +250,17 @@ const handleProjectSelect = (id: string) => {
   setExpandedUser(null);
 };
 
+  const formatDisplayDate = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    const clean = dateStr.split('T')[0];
+    const parts = clean.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString();
+  };
+
   const filteredAllocationHistory = useMemo(() => {
   const term = searchTerm.trim().toLowerCase();
 
@@ -216,10 +270,11 @@ const handleProjectSelect = (id: string) => {
     const searchMatch =
       !term ||
       records.some(record => {
-        const fullName = `${record.firstName || ''} ${record.lastName || ''}`.toLowerCase();
+        const fullName = (record.userFullName || `${record.firstName || ''} ${record.lastName || ''}`).trim().toLowerCase();
         const roleName = (record.roleName || '').toLowerCase();
+        const email = (record.email || '').toLowerCase();
 
-        return fullName.includes(term) || roleName.includes(term);
+        return fullName.includes(term) || roleName.includes(term) || email.includes(term);
       });
 
     const roleMatch =
@@ -307,13 +362,15 @@ const handleProjectSelect = (id: string) => {
                  {[
   ...new Map(
     allocationHistory.flatMap(user =>
-      (user.allocations || []).map(a => [
-        a.roleId,
-        {
-          id: a.roleId,
-          roleName: a.roleName
-        }
-      ])
+      (user.allocations || [])
+        .filter(a => a.roleId && a.roleName)
+        .map(a => [
+          String(a.roleId),
+          {
+            id: a.roleId,
+            roleName: a.roleName
+          }
+        ])
     )
   ).values()
 ].map((r: any) => (
@@ -363,51 +420,57 @@ const handleProjectSelect = (id: string) => {
                   <Card key={user.userId + '-' + userIdx} className="border border-gray-200">
                     <CardContent className="p-0">
                       {}
-                      {user && Array.isArray(user.allocations) && user.allocations.length > 0 && (
-                        <div 
-                          key={user.userId + '-' + user.allocations[0].id}
-                          className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                          onClick={() => setExpandedUser(isExpanded ? null : user.userId)}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="flex items-center gap-2">
-                                {isExpanded ? (
-                                  <ChevronUp className="w-4 h-4 text-gray-400" />
-                                ) : (
-                                  <ChevronDown className="w-4 h-4 text-gray-400" />
-                                )}
-                                <User className="w-5 h-5 text-blue-500" />
+                      {user && Array.isArray(user.allocations) && user.allocations.length > 0 && (() => {
+                        const primaryAlloc = user.allocations[0];
+                        const fullName = primaryAlloc.userFullName || `${primaryAlloc.firstName} ${primaryAlloc.lastName}`.trim() || 'Unknown User';
+                        const email = primaryAlloc.email;
+                        const totalPercentage = user.allocations.reduce((sum, a) => sum + (a.percentage || 0), 0);
+
+                        return (
+                          <div 
+                            key={user.userId + '-' + primaryAlloc.id}
+                            className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                            onClick={() => setExpandedUser(isExpanded ? null : user.userId)}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                  {isExpanded ? (
+                                    <ChevronUp className="w-4 h-4 text-gray-400" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                                  )}
+                                  <User className="w-5 h-5 text-blue-500" />
+                                </div>
+                                <div>
+                                  <h4 className="font-semibold text-gray-900">{fullName}</h4>
+                                </div>
                               </div>
-                              <div>
-                                <h4 className="font-semibold text-gray-900">{user.allocations[0].firstName} {user.allocations[0].lastName}</h4>
-                     
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                  <p className="text-sm font-medium text-gray-900">{primaryAlloc.roleName || 'Unassigned'}</p>
+                                  <p className="text-xs text-gray-600">{primaryAlloc.percentage}% allocated</p>
+                                  <p className="text-xs text-gray-500">
+                                    {primaryAlloc.startDate && primaryAlloc.endDate
+                                      ? `${formatDisplayDate(primaryAlloc.startDate)} to ${formatDisplayDate(primaryAlloc.endDate)}`
+                                      : 'No period set'
+                                    }
+                                  </p>
+                                </div>
+                                <Badge className={getStatusColor(primaryAlloc.status)}>
+                                  {primaryAlloc.status === true
+                                    ? 'Allocated'
+                                    : primaryAlloc.status === false
+                                      ? 'Deallocated'
+                                      : ''}
+                                </Badge>
                               </div>
                             </div>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-4">
-                              <div className="text-right">
-                                <p className="text-sm font-medium text-gray-900">{user.allocations[0].roleName}</p>
-                                <p className="text-xs text-gray-600">{user.allocations[0].percentage}% allocated</p>
-                                <p className="text-xs text-gray-500">
-                                  {user.allocations[0].startDate && user.allocations[0].endDate
-                                    ? `${new Date(user.allocations[0].startDate).toLocaleDateString()} to ${new Date(user.allocations[0].endDate).toLocaleDateString()}`
-                                    : 'No period set'
-                                  }
-                                </p>
-                              </div>
-                              <Badge className={getStatusColor(user.allocations[0].status)}>
-                                {user.allocations[0].status === true
-                                  ? 'Allocated'
-                                  : user.allocations[0].status === false
-                                    ? 'Deallocated'
-                                    : ''}
-                              </Badge>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                       {/* Expanded History: allocations and deallocations sorted by startDate */}
                       {isExpanded && (
@@ -421,20 +484,27 @@ const handleProjectSelect = (id: string) => {
                                   .map((record, idx) => (
                                     <div key={user.userId + '-' + record.id + '-' + idx} className="bg-white p-3 rounded-lg border">
                                       <div className="flex items-center justify-between mb-2">
-                                          <div className="flex items-center gap-2">
-                                            <Badge className={getStatusColor(record.status)}>
-                                              {record.status === true ? 'Allocated' : record.status === false ? 'Deallocated' : ''}
-                                            </Badge>
-                                          </div>
-                                        <span className="text-sm font-medium">{record.roleName || ''}</span>
+                                        <div className="flex items-center gap-2">
+                                          <Badge className={getStatusColor(record.status)}>
+                                            {record.status === true ? 'Allocated' : record.status === false ? 'Deallocated' : 'Allocated'}
+                                          </Badge>
+                                        </div>
+                                        <span className="text-sm font-medium">{record.roleName || 'Unassigned'}</span>
                                       </div>
                                       <div className="space-y-2">
                                         <div className="text-sm">
-                                          <p><span className="font-medium">User:</span> {record.firstName} {record.lastName}</p>
-                                          <p><span className="font-medium">Email:</span> {record.email}</p>
-                                          <p><span className="font-medium">Role:</span> {record.roleName}</p>
+                                          <p><span className="font-medium">User:</span> {record.userFullName || `${record.firstName} ${record.lastName}`.trim() || 'N/A'}</p>
+                                          <p><span className="font-medium">Email:</span> {record.email || 'N/A'}</p>
+                                          <p><span className="font-medium">Role:</span> {record.roleName || 'N/A'}</p>
                                           <p><span className="font-medium">Percentage:</span> {record.percentage}%</p>
-                                          <p><span className="font-medium">Period:</span> {formatDateTime(record.startDate)} to {formatDateTime(record.endDate)}</p>
+                                          <p>
+                                            <span className="font-medium">Period:</span>{' '}
+                                            {record.startDate && record.endDate
+                                              ? `${formatDisplayDate(record.startDate)} to ${formatDisplayDate(record.endDate)}`
+                                              : record.startDate
+                                                ? `From ${formatDisplayDate(record.startDate)}`
+                                                : 'Not set'}
+                                          </p>
                                         </div>
                                       </div>
                                     </div>

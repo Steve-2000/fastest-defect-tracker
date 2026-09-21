@@ -389,6 +389,8 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
     setSuccess(true);
 
     const payload: any = {
+      projectId: selectedProjectId ? Number(selectedProjectId) : null,
+      moduleId: formData.moduleId ? Number(formData.moduleId) : null,
       description: formData.description,
       stepsToRecreation: formData.steps,
       expectedResult: "",
@@ -475,7 +477,7 @@ const isDescriptionOnlyNumber = isOnlyNumberText(formData.description);
     formData.append("file", file);
     try {
       const response = await importDefects(formData, selectedProjectId);
-      showAlert("Import succeeded but no data returned.");
+      showAlert(response.message || "Import completed successfully!");
     } catch (error: any) {
       showAlert("Failed to import defects: " + (error?.message || error));
     }

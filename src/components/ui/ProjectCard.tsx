@@ -52,21 +52,26 @@ const ProjectCard: React.FC<ProjectCardProps & { forcedRisk?: 'high' | 'medium' 
   if (displayRisk === 'high') RiskIcon = AlertCircle;
   else if (displayRisk === 'medium') RiskIcon = AlertTriangle;
   else RiskIcon = CheckCircle;
+  const isHex = customBgClass?.startsWith('#') || customBgClass?.startsWith('rgb');
+  const bgClasses = !isHex && customBgClass ? customBgClass : theme.bg;
+  const borderClasses = theme.border;
+
   return (
     <button
-      className={`relative ${cardSize} rounded-full border-4 shadow-xl flex flex-col items-center justify-between py-6 px-2 transition-transform hover:scale-105 hover:shadow-2xl focus:outline-none ring-1 ring-gray-200 ${customBgClass || theme.bg}`}
+      className={`relative ${cardSize} rounded-full border-4 shadow-xl flex flex-col items-center justify-between py-6 px-2 transition-transform hover:scale-105 hover:shadow-2xl focus:outline-none ring-1 ring-gray-200 ${borderClasses} ${bgClasses}`}
       onClick={onClick}
       aria-label={`Project card for ${name}`}
       style={{
         minWidth: size === 'small' ? '14rem' : '18rem',
         minHeight: size === 'small' ? '14rem' : '18rem',
+        ...(isHex ? { backgroundColor: customBgClass } : {}),
       }}
     >
-      {}
+      {/* Icon */}
       <RiskIcon className={`${iconSize} mb-1 text-white`} />
-      {}
-      <span className={`${nameText} font-bold mb-1 text-white`}>{name}</span>
-      {}
+      {/* Project Name */}
+      <span className={`${nameText} font-bold mb-1 text-white text-center px-3 truncate max-w-[90%]`}>{name}</span>
+      {/* Risk Badge */}
       <span className={`px-3 py-1 rounded-full font-semibold ${badgeText} bg-white/20 ${riskTextClass || 'text-white'} mb-1`}>
         {riskLabel || (displayRisk === 'high' ? 'High Risk' : displayRisk === 'medium' ? 'Medium Risk' : 'Low Risk')}
       </span>

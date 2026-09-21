@@ -60,7 +60,8 @@ const EVENT_VARIABLES: Record<string, string[]> = {
   PASSWORD_RESET: ["employeeName","resetLink"],
   PASSWORD_CHANGED: ["employeeName"],
   ACCOUNT_LOCKED: ["employeeName"],
-  LOGIN_SUCCESS: ["employeeName","loginTime"],
+  LOGIN_SUCCESS: ["employeeName","ipAddress","device","loginTime","year"],
+  LOGIN_SUCCESSFUL: ["employeeName","ipAddress","device","loginTime","year"],
 };
 
   const ALWAYS_ENABLED_TEMPLATES: string[] = [
@@ -221,26 +222,28 @@ export const EmailTemplatesTab: React.FC = () => {
         getAllEmailPointSetups(),
       ]);
 
-      const apiTemplates: any[] = tplRes?.data || [];
-      const pointSetups: any[] = psRes || [];
+      const apiTemplates: any[] = Array.isArray(tplRes) ? tplRes : (tplRes?.data || []);
+      const pointSetups: any[] = Array.isArray(psRes) ? psRes : (psRes?.data || []);
 
-      
       const enabledMap: Record<number, boolean> = {};
       pointSetups.forEach((ps: any) => {
         enabledMap[ps.id] = ps.isEnabled ?? true;
       });
 
-      const merged: MergedTemplate[] = apiTemplates.map((t: any) => ({
-  id: t.id,
-  pointSetupId: t.pointSetupId,
-  eventType: t.eventType,
-  eventLabel: t.eventType?.replaceAll("_", " ") || "",
-  subject: t.subject || "",
-  body: t.body || "",
-  variables: EVENT_VARIABLES[t.eventType] || DEFAULT_VARIABLES,
-  isEnabled: canBeDisabled(t.eventType) ? (enabledMap[t.pointSetupId] ?? true) : true,
-  updatedAt: t.updatedAt,
-}));
+      const merged: MergedTemplate[] = apiTemplates.map((t: any) => {
+        const evType = t.eventType || t.eventKey || t.templateKey || `EVENT_${t.id}`;
+        return {
+          id: t.id,
+          pointSetupId: t.pointSetupId || t.id,
+          eventType: evType,
+          eventLabel: t.eventLabel || evType.replaceAll("_", " ") || t.name || `Template ${t.id}`,
+          subject: t.subject || "",
+          body: t.body || t.bodyHtml || "",
+          variables: t.variables || EVENT_VARIABLES[evType] || DEFAULT_VARIABLES,
+          isEnabled: canBeDisabled(evType) ? (enabledMap[t.pointSetupId || t.id] ?? t.isEnabled ?? true) : true,
+          updatedAt: t.updatedAt || new Date().toISOString(),
+        };
+      });
 
       setTemplates(merged);
     } catch (err) {
