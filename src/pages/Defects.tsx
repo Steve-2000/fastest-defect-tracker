@@ -671,8 +671,14 @@ export const Defects: React.FC = () => {
       defectTypeId: d.defectTypeId,
       releaseId: d.releaseId,
       testCaseId: d.testCaseId || d.testCase?.id || d.test_case_id || null,
-      hasTestCase: Boolean(d.testCase || d.testCaseId || d.test_case_id),
-      isAddTestCase: d.isAddTestCase ?? true,
+      hasTestCase: Boolean(
+        (d.testCase && (d.testCase.id || d.testCase.testCaseId || d.testCase.name)) ||
+        d.testCaseId ||
+        d.test_case_id ||
+        d.isAddTestCase === true ||
+        d.testCaseRequired === true
+      ),
+      isAddTestCase: d.isAddTestCase === true || d.testCaseRequired === true,
 
       // Names from direct fields
       severity_name: d.severityName || d.severity || "",
@@ -1578,8 +1584,8 @@ export const Defects: React.FC = () => {
   // Update handleDelete to use confirmation modal
   const handleDelete = async (defectId: string) => {
     const defect = backendDefects.find((d) => d.defectId === defectId);
-    if (defect && (defect.hasTestCase || defect.testCaseId)) {
-      showAlert("This defect cannot be deleted because it is connected with a test case.");
+    if (defect && (defect.hasTestCase || defect.testCaseId || defect.isAddTestCase)) {
+      showAlert("Dependency exists: This defect has an associated test case and cannot be deleted.");
       return;
     }
     openDeleteConfirm(defectId);
@@ -1596,8 +1602,8 @@ export const Defects: React.FC = () => {
         closeDeleteConfirm();
         return;
       }
-      if (defect.hasTestCase || defect.testCaseId) {
-        showAlert("This defect cannot be deleted because it is connected with a test case.");
+      if (defect.hasTestCase || defect.testCaseId || defect.isAddTestCase) {
+        showAlert("Dependency exists: This defect has an associated test case and cannot be deleted.");
         closeDeleteConfirm();
         return;
       }
@@ -4234,25 +4240,14 @@ export const Defects: React.FC = () => {
                                   <Edit2 className="w-4 h-4" />
                                 </button>
                                 {can.defect.delete && (
-                                  defect.hasTestCase || defect.testCaseId ? (
-                                    <button
-                                      type="button"
-                                      className="text-gray-300 cursor-not-allowed flex items-center"
-                                      title="Cannot delete defect connected with a test case"
-                                      disabled
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="text-red-600 hover:text-red-900 flex items-center"
-                                      title="Delete Defect"
-                                      onClick={() => handleDelete(defect.defectId)}
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  )
+                                  <button
+                                    type="button"
+                                    className="text-red-600 hover:text-red-900 flex items-center"
+                                    title="Delete Defect"
+                                    onClick={() => handleDelete(defect.defectId)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
                                 )}
                                 {can.defectComment.view && (
                                   <button
