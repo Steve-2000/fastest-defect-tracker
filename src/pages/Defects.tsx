@@ -670,7 +670,8 @@ export const Defects: React.FC = () => {
       statusId: d.statusId,
       defectTypeId: d.defectTypeId,
       releaseId: d.releaseId,
-      testCaseId: d.testCaseId,
+      testCaseId: d.testCaseId || d.testCase?.id || d.test_case_id || null,
+      hasTestCase: Boolean(d.testCase || d.testCaseId || d.test_case_id),
       isAddTestCase: d.isAddTestCase ?? true,
 
       // Names from direct fields
@@ -1576,6 +1577,11 @@ export const Defects: React.FC = () => {
     setDeleteConfirm({ open: false, defectId: null });
   // Update handleDelete to use confirmation modal
   const handleDelete = async (defectId: string) => {
+    const defect = backendDefects.find((d) => d.defectId === defectId);
+    if (defect && (defect.hasTestCase || defect.testCaseId)) {
+      showAlert("This defect cannot be deleted because it is connected with a test case.");
+      return;
+    }
     openDeleteConfirm(defectId);
   };
 
@@ -1590,12 +1596,17 @@ export const Defects: React.FC = () => {
         closeDeleteConfirm();
         return;
       }
+      if (defect.hasTestCase || defect.testCaseId) {
+        showAlert("This defect cannot be deleted because it is connected with a test case.");
+        closeDeleteConfirm();
+        return;
+      }
       const response = await deleteDefectById(defect.id.toString());
-      if (response.status === "Success" || response.statusCode === 2000) {
+      if (response.status === "Success" || response.status === "success" || response.statusCode === 200 || response.statusCode === 2000) {
         showAlert("Defect deleted successfully.");
         await fetchData();
       } else {
-        showAlert("Delete failed. Please try again.");
+        showAlert(response.statusMessage || response.message || "Delete failed. Please try again.");
       }
     } catch (error: any) {
       console.error("❌ Error deleting defect:", error);
@@ -1609,30 +1620,25 @@ export const Defects: React.FC = () => {
         console.error("📡 Server error response:", { status, data });
 
         if (data) {
-          if (data.message) {
-            // Backend provided a specific error message
-            errorMessage = `Failed to delete defect: ${data.message}`;
+          if (data.statusMessage) {
+            errorMessage = data.statusMessage;
+          } else if (data.message) {
+            errorMessage = data.message;
           } else if (data.error) {
-            // Alternative error field
-            errorMessage = `Failed to delete defect: ${data.error}`;
+            errorMessage = data.error;
           } else if (typeof data === "string") {
-            // Error message as string
-            errorMessage = `Failed to delete defect: ${data}`;
+            errorMessage = data;
           } else {
-            // Fallback for unknown data structure
             errorMessage = `Failed to delete defect: ${JSON.stringify(data)}`;
           }
         } else {
-          // No data in response
           errorMessage = `Failed to delete defect: Server error (${status})`;
         }
       } else if (error.request) {
-        // Network error - no response received
         console.error("🌐 Network error:", error.request);
         errorMessage =
           "Failed to delete defect: Network error. Please check your connection.";
       } else {
-        // Other error
         console.error("⚠️ Unknown error:", error.message);
         errorMessage = `Failed to delete defect: ${error.message || "Unknown error"}`;
       }
@@ -2637,7 +2643,8 @@ export const Defects: React.FC = () => {
             errorMessage = `Import failed: Server error (${status}). Please try again later.`;
           } else {
 
-            errorMessage = `Import failed: Please check your file and try again.`;
+            errorMessage =
+              "Import failed: Please check your file and try again.";
           }
         }
       } else if (error.request) {
@@ -4227,14 +4234,25 @@ export const Defects: React.FC = () => {
                                   <Edit2 className="w-4 h-4" />
                                 </button>
                                 {can.defect.delete && (
-                                  <button
-                                    type="button"
-                                    className="text-red-600 hover:text-red-900 flex items-center"
-                                    title="Delete Defect"
-                                    onClick={() => handleDelete(defect.defectId)}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  defect.hasTestCase || defect.testCaseId ? (
+                                    <button
+                                      type="button"
+                                      className="text-gray-300 cursor-not-allowed flex items-center"
+                                      title="Cannot delete defect connected with a test case"
+                                      disabled
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="text-red-600 hover:text-red-900 flex items-center"
+                                      title="Delete Defect"
+                                      onClick={() => handleDelete(defect.defectId)}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )
                                 )}
                                 {can.defectComment.view && (
                                   <button
